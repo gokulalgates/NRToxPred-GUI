@@ -16,8 +16,7 @@ This guide walks you through installing, configuring, and using the NR-ToxPred d
 4. [Batch Prediction](#4-batch-prediction)
 5. [Understanding the Results](#5-understanding-the-results)
 6. [Applicability Domain Parameters](#6-applicability-domain-parameters)
-7. [Uploading Models to Hugging Face](#7-uploading-models-to-hugging-face)
-8. [Troubleshooting](#8-troubleshooting)
+7. [Troubleshooting](#7-troubleshooting)
 
 ---
 
@@ -247,68 +246,7 @@ For each compound × receptor pair:
 
 ---
 
-## 7. Uploading Models to Hugging Face
-
-If you have the model files and want to host them so others can auto-download, follow these steps.
-
-### Step 1 — Create a Hugging Face account
-
-Go to [huggingface.co](https://huggingface.co/) and create a free account.
-
-### Step 2 — Install the Hugging Face CLI
-
-```bash
-pip install huggingface_hub
-```
-
-### Step 3 — Log in
-
-```bash
-huggingface-cli login
-```
-
-Paste your Hugging Face **write token** when prompted (get one from huggingface.co → Settings → Access Tokens).
-
-### Step 4 — Upload the models
-
-```bash
-python upload_models_to_hf.py --repo YOUR_HF_USERNAME/nrtoxpred-models
-```
-
-Add `--private` if you want the repository to be private:
-
-```bash
-python upload_models_to_hf.py --repo YOUR_HF_USERNAME/nrtoxpred-models --private
-```
-
-This uploads:
-- All SVM models from `MODELS/morgan/` and `MODELS/MACCS/`
-- The label encoder `MODELS/ARclasses.npy`
-- Applicability domain training data from `X_train/`
-
-> **Note:** SuperLearner models are excluded because each one is 1–1.5 GB.
-
-### Step 5 — Configure the GUI
-
-Open `pytox_gui.py` and set `HF_REPO` on line 22:
-
-```python
-HF_REPO = "YOUR_HF_USERNAME/nrtoxpred-models"
-```
-
-Commit and push the change to GitHub:
-
-```bash
-git add pytox_gui.py
-git commit -m "Set HF_REPO for auto-download"
-git push
-```
-
-Now any user who clones the repo and runs `python pytox_gui.py` will be offered automatic model download on first launch.
-
----
-
-## 8. Troubleshooting
+## 7. Troubleshooting
 
 ### The app starts but no models are found
 
