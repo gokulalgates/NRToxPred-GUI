@@ -73,7 +73,10 @@ try:
     from rdkit.Chem.MolStandardize import rdMolStandardize
     from molvs import standardize_smiles
     from sklearn.preprocessing import LabelEncoder
-    import pybel
+    try:
+        import pybel                    # OpenBabel 2.x
+    except ImportError:
+        from openbabel import pybel     # OpenBabel 3.x (conda-forge)
     # AD module lives inside the Django app but has no Django dependency
     sys.path.insert(0, SCRIPT_DIR)
     from toxi.pyAppDomain import AppDomainFpSimilarity
