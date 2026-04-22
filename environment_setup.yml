@@ -1,0 +1,18 @@
+name: nrtoxpred
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - rdkit
+  - openbabel
+  - pip
+  - pip:
+    - molvs
+    - scikit-learn==0.23.2
+    - pandas
+    - numpy
+    - scipy
+    - openpyxl
+    - Pillow
+    - huggingface_hub

@@ -6,6 +6,28 @@ A standalone desktop application for predicting the toxicity of chemical compoun
 
 ---
 
+## Quick Start (No Python experience needed)
+
+**Step 1 — Install Miniconda** (one-time, skip if already installed)
+Download and install from: https://docs.conda.io/en/latest/miniconda.html
+
+**Step 2 — Download this repository**
+Click the green **Code** button above → **Download ZIP** → Extract it
+
+**Step 3 — Install** (one-time)
+- **Windows:** Double-click `install.bat`
+- **Mac / Linux:** Open a terminal in the folder and run `bash install.sh`
+
+Installation takes 5–15 minutes. When it finishes, you are ready.
+
+**Step 4 — Run the app**
+- **Windows:** Double-click `run.bat`
+- **Mac / Linux:** Run `bash run.sh`
+
+On first launch the app will offer to automatically download the prediction models (~250 MB).
+
+---
+
 ## Overview
 
 NR-ToxPred predicts whether a compound is **Active** or **Inactive** against the following nuclear receptors:
