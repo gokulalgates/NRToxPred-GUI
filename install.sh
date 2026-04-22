@@ -2,6 +2,9 @@
 # NR-ToxPred — One-Time Installer (Linux / macOS)
 set -e
 
+# Change to the folder where this script lives
+cd "$(dirname "$0")"
+
 echo ""
 echo " ============================================="
 echo "   NR-ToxPred  |  One-Time Installation"

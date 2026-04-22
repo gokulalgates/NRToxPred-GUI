@@ -1,6 +1,9 @@
 #!/bin/bash
 # NR-ToxPred — Launcher (Linux / macOS)
 
+# Change to the folder where this script lives
+cd "$(dirname "$0")"
+
 echo ""
 echo " ============================================="
 echo "   NR-ToxPred  |  Starting..."

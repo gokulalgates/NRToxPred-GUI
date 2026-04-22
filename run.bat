@@ -2,6 +2,9 @@
 title NR-ToxPred
 color 0A
 
+:: Change to the folder where this script lives
+cd /d "%~dp0"
+
 echo.
 echo  =============================================
 echo    NR-ToxPred  ^|  Starting...
