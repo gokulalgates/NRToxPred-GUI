@@ -135,10 +135,6 @@ try:
     from rdkit.Chem.MolStandardize import rdMolStandardize
     from molvs import standardize_smiles
     from sklearn.preprocessing import LabelEncoder
-    try:
-        import pybel                    # OpenBabel 2.x
-    except ImportError:
-        from openbabel import pybel     # OpenBabel 3.x (conda-forge)
     # AD module lives inside the Django app but has no Django dependency
     sys.path.insert(0, SCRIPT_DIR)
     from toxi.pyAppDomain import AppDomainFpSimilarity
@@ -259,13 +255,19 @@ def _model_path(fp_type: str, receptor: str, algorithm: str) -> str:
     return os.path.join(_get_models_base(), "MODELS", folder, fname)
 
 
+def _rdkit_canonical(smi: str) -> str:
+    """Return RDKit canonical SMILES, or raise ValueError if unparseable."""
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        raise ValueError(f"Could not parse SMILES: {smi}")
+    return Chem.MolToSmiles(mol)
+
+
 def _standardize_smiles(smiles: str):
     """Return (rdkit_mol, can_smiles_str, data_df) for a single SMILES."""
     data = pd.DataFrame({"SMILES": [smiles]})
     data["STEROREMOVED"] = [re.sub(r"[/@\\]", "", s) for s in data["SMILES"]]
-    data["can_smiles"] = [
-        pybel.readstring("smi", s).write("can") for s in data["STEROREMOVED"]
-    ]
+    data["can_smiles"] = [_rdkit_canonical(s) for s in data["STEROREMOVED"]]
     std  = standardize_smiles(data["can_smiles"][0])
     mol1 = Chem.MolFromSmiles(std)
     if mol1 is None:

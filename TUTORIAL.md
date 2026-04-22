@@ -55,7 +55,7 @@ This installs: `molvs`, `scikit-learn==0.23.2`, `pandas`, `numpy`, `scipy`, `ope
 ### Step 5 — Verify the installation
 
 ```bash
-python -c "from rdkit import Chem; import pybel; print('OK')"
+python -c "from rdkit import Chem; print('OK')"
 ```
 
 If you see `OK`, the core dependencies are ready.
@@ -251,16 +251,6 @@ For each compound × receptor pair:
 ### The app starts but no models are found
 
 Make sure `MODELS/` and `X_train/` exist next to `pytox_gui.py`. If `HF_REPO` is set, click **Download** in the dialog that appears at startup.
-
-### `ImportError: No module named 'pybel'`
-
-OpenBabel's Python bindings are named `pybel` inside the `openbabel` package. Install via conda:
-
-```bash
-conda install -c conda-forge openbabel
-```
-
-Do **not** install with pip — it is not the same package.
 
 ### `ImportError: No module named 'rdkit'`
 
