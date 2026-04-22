@@ -1,0 +1,13 @@
+# GUI application dependencies
+# Install with:  pip install -r requirements.txt
+# (RDKit and OpenBabel are best installed via conda)
+
+rdkit-pypi
+molvs
+scikit-learn==0.23.2
+pandas
+numpy
+scipy
+openpyxl
+Pillow
+huggingface_hub

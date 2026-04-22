@@ -1,0 +1,31 @@
+# Models and data (hosted on Hugging Face instead)
+MODELS/
+X_train/
+media/
+static_cdn/
+
+# Django / runtime artifacts
+db.sqlite3
+*.log
+*.pid
+*.out
+dump.rdb
+celeryID
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+env/
+*.conf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+temptemp*
+gypsum_dl_test_output/
+results.xlsx
+Results*.xlsx
+Failed_smiles*.xlsx
+static/temp/
