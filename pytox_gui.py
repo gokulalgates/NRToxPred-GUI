@@ -96,12 +96,31 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
     dest = _DEFAULT_MODELS_BASE
     os.makedirs(dest, exist_ok=True)
 
-    snapshot_download(
-        repo_id=HF_REPO,
-        repo_type="model",
-        local_dir=dest,
-        ignore_patterns=ignore,
-    )
+    try:
+        # local_dir_use_symlinks=False forces real file copies instead of
+        # symlinks to the HF cache, so files are visible in the folder.
+        snapshot_download(
+            repo_id=HF_REPO,
+            repo_type="model",
+            local_dir=dest,
+            local_dir_use_symlinks=False,
+            ignore_patterns=ignore,
+        )
+    except TypeError:
+        # Older huggingface_hub doesn't have local_dir_use_symlinks
+        snapshot_download(
+            repo_id=HF_REPO,
+            repo_type="model",
+            local_dir=dest,
+            ignore_patterns=ignore,
+        )
+
+    # Verify files actually landed in dest
+    probe = os.path.join(dest, "MODELS", "morgan", "ARsvm_best.model")
+    if not os.path.exists(probe):
+        raise FileNotFoundError(
+            f"Download finished but model files were not found in:\n  {dest}\n\n"
+            "Try updating huggingface_hub:\n  pip install -U huggingface_hub")
 
     if progress_cb:
         progress_cb("Download complete!", total, total)
@@ -987,9 +1006,10 @@ class SinglePredTab(ttk.Frame):
             desc, results = predict_single(smiles, name, fp, algo, recs,
                                            Nsimilar, Scutoff)
             photo = mol_to_image(smiles)
-            self.after(0, lambda: self._show_results(desc, results, photo))
+            _ui_queue.put(lambda d=desc, r=results, p=photo: self._show_results(d, r, p))
         except Exception as e:
-            self.after(0, lambda: self._show_error(str(e)))
+            msg = str(e)
+            _ui_queue.put(lambda m=msg: self._show_error(m))
 
     def _show_results(self, desc, results, photo):
         # molecule image
@@ -1201,7 +1221,7 @@ class BatchPredTab(ttk.Frame):
                 tree.delete(row)
 
         def progress(idx, total, rec_name):
-            self.after(0, lambda: self._update_progress(idx, total, rec_name))
+            _ui_queue.put(lambda i=idx, t=total, r=rec_name: self._update_progress(i, t, r))
 
         threading.Thread(
             target=self._thread_batch,
@@ -1212,9 +1232,10 @@ class BatchPredTab(ttk.Frame):
     def _thread_batch(self, df, fp, algo, recs, Nsimilar, Scutoff, progress_cb):
         try:
             results = predict_batch(df, fp, algo, recs, Nsimilar, Scutoff, progress_cb)
-            self.after(0, lambda: self._show_batch_results(results))
+            _ui_queue.put(lambda r=results: self._show_batch_results(r))
         except Exception as e:
-            self.after(0, lambda: self._batch_error(str(e)))
+            msg = str(e)
+            _ui_queue.put(lambda m=msg: self._batch_error(m))
 
     def _update_progress(self, idx, total, rec_name):
         self.prog["value"] = idx
