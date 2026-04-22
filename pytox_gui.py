@@ -581,6 +581,7 @@ class NRToxPredApp(tk.Tk):
         self.minsize(920, 640)
         self.configure(bg=COLORS["bg"])
         self._apply_style()
+        self._build_menu()
         self._build_header()
         self._build_tabs()
         self._start_prewarm()
@@ -671,6 +672,39 @@ class NRToxPredApp(tk.Tk):
                     fieldbackground=COLORS["entry_bg"], foreground=COLORS["text"],
                     background=COLORS["surface2"], arrowcolor=COLORS["subtext"])
 
+    # ── menu bar ──────────────────────────────────────────────────────────────
+    def _build_menu(self):
+        menubar = tk.Menu(self)
+        self.config(menu=menubar)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Download Models…",
+                              command=self._show_download_dialog)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.quit)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(
+            label="About",
+            command=lambda: messagebox.showinfo(
+                "About NR-ToxPred",
+                "NR-ToxPred\n\nPredicts binding of small molecules to nine "
+                "nuclear receptors using pre-trained SVM / SuperLearner models.\n\n"
+                "Citation:\nPredicting the binding of small molecules to nuclear "
+                "receptors using machine learning.\n"
+                "Brief Bioinform. 2022;23(3):bbac114.\n"
+                "doi: 10.1093/bib/bbac114"))
+
+    def _show_download_dialog(self):
+        dlg = DownloadDialog(self)
+        self.wait_window(dlg)
+        if _models_present():
+            self._cache_lbl.config(text="⏳ Reloading models…",
+                                   fg=COLORS["subtext"])
+            self._start_prewarm()
+
     # ── header ────────────────────────────────────────────────────────────────
     def _build_header(self):
         hdr = ttk.Frame(self, style="Surface.TFrame")
@@ -687,6 +721,9 @@ class NRToxPredApp(tk.Tk):
                                    bg=COLORS["surface"], fg=COLORS["subtext"],
                                    font=FONT_SMALL)
         self._cache_lbl.pack(side="right", padx=8)
+        ttk.Button(inner, text="Download Models",
+                   style="Secondary.TButton",
+                   command=self._show_download_dialog).pack(side="right", padx=(0, 6))
 
     def _start_prewarm(self):
         """Load all models and AD data in a background thread."""
