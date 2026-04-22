@@ -8,6 +8,7 @@ import sys
 import re
 import pickle
 import warnings
+import queue
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -145,6 +146,10 @@ _adfs_cache: dict  = {}
 # Simple lock so the background pre-warm thread and the UI thread don't race
 import threading as _threading
 _cache_lock = _threading.Lock()
+
+# Thread-safe UI update queue: background threads post callables here;
+# the main thread drains it via NRToxPredApp._poll_ui_queue().
+_ui_queue: queue.Queue = queue.Queue()
 
 _encoder = None
 
@@ -542,6 +547,17 @@ class NRToxPredApp(tk.Tk):
         self._build_header()
         self._build_tabs()
         self._start_prewarm()
+        self._poll_ui_queue()
+
+    def _poll_ui_queue(self):
+        """Drain _ui_queue on the main thread so background threads can post UI updates safely."""
+        try:
+            while True:
+                fn = _ui_queue.get_nowait()
+                fn()
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_ui_queue)
 
     # ── theming ───────────────────────────────────────────────────────────────
     def _apply_style(self):
@@ -639,9 +655,9 @@ class NRToxPredApp(tk.Tk):
         """Load all models and AD data in a background thread."""
         def _run():
             def _cb(msg):
-                self.after(0, lambda: self._cache_lbl.config(text=msg))
+                _ui_queue.put(lambda m=msg: self._cache_lbl.config(text=m))
             prewarm_cache(status_cb=_cb)
-            self.after(0, lambda: self._cache_lbl.config(
+            _ui_queue.put(lambda: self._cache_lbl.config(
                 text="✓ Models ready", fg=COLORS["active"]))
         _threading.Thread(target=_run, daemon=True).start()
 
@@ -1386,11 +1402,12 @@ class DownloadDialog(tk.Toplevel):
         try:
             def cb(fname, cur, total):
                 short = os.path.basename(fname)
-                self.after(0, lambda: self._update(short, cur, total))
+                _ui_queue.put(lambda m=short, c=cur, t=total: self._update(m, c, t))
             download_models_from_hf(progress_cb=cb, svm_only=svm_only)
-            self.after(0, self._done)
+            _ui_queue.put(self._done)
         except Exception as e:
-            self.after(0, lambda: self._error(str(e)))
+            msg = str(e)
+            _ui_queue.put(lambda m=msg: self._error(m))
 
     def _update(self, msg, cur, total):
         if total > 0 and cur > 0:
