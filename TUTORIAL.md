@@ -59,7 +59,7 @@ python -c "from rdkit import Chem; print('OK')"
 
 If you see `OK`, the core dependencies are ready.
 
-> **Note:** scikit-learn is pinned to 0.23.2 in `requirements.txt` because the model files were trained with that version. numpy is pinned to 1.23 for compatibility.
+> **Note:** scikit-learn is pinned to 0.23.2 and `mlens` is required for SuperLearner models. Both are installed automatically by `pip install -r requirements.txt`. numpy is pinned to 1.23 for compatibility.
 
 ---
 
@@ -372,6 +372,16 @@ Make sure `openpyxl` is installed:
 ```bash
 pip install openpyxl
 ```
+
+### `ImportError: No module named 'mlens'` or SuperLearner fails
+
+`mlens` (ML-Ensemble) is required to run SuperLearner predictions. Install it with:
+
+```bash
+pip install mlens
+```
+
+If you used the one-click installer, re-run `install.bat` / `install.sh` to update the environment.
 
 ### scikit-learn version mismatch warning
 

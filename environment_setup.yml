@@ -11,6 +11,7 @@ dependencies:
   - pip:
     - molvs
     - scikit-learn==0.23.2
+    - mlens
     - pandas
     - scipy
     - openpyxl

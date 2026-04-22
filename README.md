@@ -107,9 +107,9 @@ conda install -c conda-forge rdkit
 pip install -r requirements.txt
 ```
 
-`requirements.txt` includes: `molvs`, `scikit-learn==0.23.2`, `pandas`, `numpy`, `scipy`, `openpyxl`, `Pillow`, `huggingface_hub`
+`requirements.txt` includes: `molvs`, `scikit-learn==0.23.2`, `mlens`, `pandas`, `numpy`, `scipy`, `openpyxl`, `Pillow`, `huggingface_hub`
 
-> **Note:** scikit-learn is pinned to 0.23.2 because the model files were trained with that version.
+> **Note:** scikit-learn is pinned to 0.23.2 and mlens is required for SuperLearner models. Both are installed automatically by `requirements.txt`.
 
 ---
 
