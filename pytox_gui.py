@@ -50,10 +50,9 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
             "Run:  pip install huggingface_hub")
 
     all_files = [f for f in list_repo_files(HF_REPO, repo_type="model")
-                 if not f.startswith(".")]
+                 if not f.startswith(".") and f != "README.md"]
 
     if svm_only:
-        # Keep SVM models, X_train, ARclasses — skip *_SL.model
         files = [f for f in all_files if "_SL.model" not in f]
     else:
         files = all_files
@@ -64,13 +63,23 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
             progress_cb(filename, i, total)
         local_path = os.path.join(SCRIPT_DIR, filename)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        hf_hub_download(
-            repo_id=HF_REPO,
-            filename=filename,
-            repo_type="model",
-            local_dir=SCRIPT_DIR,
-            local_dir_use_symlinks=False,   # required on Windows (no admin symlinks)
-        )
+        # local_dir_use_symlinks was removed in huggingface_hub >= 0.24;
+        # try new API first, fall back to old API
+        try:
+            hf_hub_download(
+                repo_id=HF_REPO,
+                filename=filename,
+                repo_type="model",
+                local_dir=SCRIPT_DIR,
+            )
+        except TypeError:
+            hf_hub_download(
+                repo_id=HF_REPO,
+                filename=filename,
+                repo_type="model",
+                local_dir=SCRIPT_DIR,
+                local_dir_use_symlinks=False,
+            )
 
 # ── heavy scientific imports ──────────────────────────────────────────────────
 try:
@@ -1369,7 +1378,8 @@ class DownloadDialog(tk.Toplevel):
         self.after(800, self.destroy)
 
     def _error(self, msg):
-        self.dl_btn.config(state="normal")
+        self.dl_svm_btn.config(state="normal")
+        self.dl_all_btn.config(state="normal")
         self.status.config(text=f"Error: {msg}", fg=COLORS["inactive"])
         messagebox.showerror("Download Failed", msg, parent=self)
 
