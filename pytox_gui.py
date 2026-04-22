@@ -33,53 +33,50 @@ def _models_present() -> bool:
 
 def download_models_from_hf(progress_cb=None, svm_only=False):
     """
-    Download models from Hugging Face Hub.
-    svm_only=True downloads SVM models only (~250 MB).
-    svm_only=False downloads SVM + SuperLearner (~12 GB).
-    progress_cb(filename, current, total) is called for each file.
+    Download models from Hugging Face Hub using snapshot_download.
+    svm_only=True  → SVM models + X_train (~250 MB)
+    svm_only=False → SVM + SuperLearner   (~12 GB)
+    progress_cb(msg, current, total) is called for status updates.
     """
     if not HF_REPO:
         raise ValueError(
             "HF_REPO is not set in pytox_gui.py.\n"
             "Edit the file and set HF_REPO = 'YourName/nrtoxpred-models'.")
     try:
-        from huggingface_hub import hf_hub_download, list_repo_files
+        from huggingface_hub import snapshot_download, list_repo_files
     except ImportError:
         raise ImportError(
             "huggingface_hub is not installed.\n"
             "Run:  pip install huggingface_hub")
+
+    # Show immediately so the UI isn't frozen while the file list loads
+    if progress_cb:
+        progress_cb("Connecting to Hugging Face…", 0, 1)
 
     all_files = [f for f in list_repo_files(HF_REPO, repo_type="model")
                  if not f.startswith(".") and f != "README.md"]
 
     if svm_only:
         files = [f for f in all_files if "_SL.model" not in f]
+        ignore = ["*_SL.model", "README.md", ".gitattributes"]
     else:
         files = all_files
+        ignore = ["README.md", ".gitattributes"]
 
     total = len(files)
-    for i, filename in enumerate(files, 1):
-        if progress_cb:
-            progress_cb(filename, i, total)
-        local_path = os.path.join(SCRIPT_DIR, filename)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        # local_dir_use_symlinks was removed in huggingface_hub >= 0.24;
-        # try new API first, fall back to old API
-        try:
-            hf_hub_download(
-                repo_id=HF_REPO,
-                filename=filename,
-                repo_type="model",
-                local_dir=SCRIPT_DIR,
-            )
-        except TypeError:
-            hf_hub_download(
-                repo_id=HF_REPO,
-                filename=filename,
-                repo_type="model",
-                local_dir=SCRIPT_DIR,
-                local_dir_use_symlinks=False,
-            )
+    if progress_cb:
+        progress_cb(f"Downloading {total} files — please wait…", 0, total)
+
+    # snapshot_download writes directly to local_dir without cache/symlink issues
+    snapshot_download(
+        repo_id=HF_REPO,
+        repo_type="model",
+        local_dir=SCRIPT_DIR,
+        ignore_patterns=ignore,
+    )
+
+    if progress_cb:
+        progress_cb("Download complete!", total, total)
 
 # ── heavy scientific imports ──────────────────────────────────────────────────
 try:
@@ -1368,14 +1365,19 @@ class DownloadDialog(tk.Toplevel):
         except Exception as e:
             self.after(0, lambda: self._error(str(e)))
 
-    def _update(self, fname, cur, total):
-        self.prog["maximum"] = total
-        self.prog["value"]   = cur
-        self.status.config(text=f"[{cur}/{total}]  {fname}")
+    def _update(self, msg, cur, total):
+        if total > 0 and cur > 0:
+            self.prog.config(mode="determinate", maximum=total, value=cur)
+        else:
+            self.prog.config(mode="indeterminate")
+            self.prog.start(12)
+        self.status.config(text=msg)
 
     def _done(self):
+        self.prog.stop()
+        self.prog.config(mode="determinate", value=self.prog["maximum"])
         self.status.config(text="Download complete!")
-        self.after(800, self.destroy)
+        self.after(1200, self.destroy)
 
     def _error(self, msg):
         self.dl_svm_btn.config(state="normal")
