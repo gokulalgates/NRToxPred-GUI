@@ -520,13 +520,23 @@ def predict_batch(df: pd.DataFrame, fp_type: str, algorithm: str,
     return results_by_rec
 
 
-def mol_to_image(smiles: str, size=(310, 220)) -> "ImageTk.PhotoImage | None":
+def mol_to_pil(smiles: str, size=(310, 220)):
+    """Return a PIL Image for the molecule — safe to call from any thread."""
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        img = Draw.MolToImage(mol, size=size)
-        return ImageTk.PhotoImage(img)
+        return Draw.MolToImage(mol, size=size)
+    except Exception:
+        return None
+
+
+def pil_to_photo(pil_img) -> "ImageTk.PhotoImage | None":
+    """Convert a PIL Image to ImageTk.PhotoImage — must run on the main thread."""
+    if pil_img is None:
+        return None
+    try:
+        return ImageTk.PhotoImage(pil_img)
     except Exception:
         return None
 
@@ -995,6 +1005,18 @@ class SinglePredTab(ttk.Frame):
         if not recs:
             messagebox.showwarning("No Receptors", "Select at least one receptor.")
             return
+        # Check that at least one model file exists for this algorithm
+        probe = _model_path(fp, BINARY_RECEPTORS[0], algo)
+        if not os.path.exists(probe):
+            messagebox.showerror(
+                "Models Not Found",
+                f"No {algo.upper()} models found for '{fp}' fingerprint.\n\n"
+                + ("SuperLearner models (~12 GB) were not downloaded.\n"
+                   "Switch the Algorithm to SVM, or restart the app and\n"
+                   "choose 'Download All' to get the SuperLearner models."
+                   if algo == "superlearner" else
+                   "Restart the app and download the models when prompted."))
+            return
         Nsimilar = self.ad_params.Nsimilar
         Scutoff  = self.ad_params.Scutoff
         self.predict_btn.config(state="disabled")
@@ -1007,8 +1029,10 @@ class SinglePredTab(ttk.Frame):
         try:
             desc, results = predict_single(smiles, name, fp, algo, recs,
                                            Nsimilar, Scutoff)
-            photo = mol_to_image(smiles)
-            _ui_queue.put(lambda d=desc, r=results, p=photo: self._show_results(d, r, p))
+            pil_img = mol_to_pil(smiles)
+            # ImageTk.PhotoImage must be created on the main thread
+            _ui_queue.put(lambda d=desc, r=results, img=pil_img:
+                          self._show_results(d, r, pil_to_photo(img)))
         except Exception as e:
             msg = str(e)
             _ui_queue.put(lambda m=msg: self._show_error(m))
