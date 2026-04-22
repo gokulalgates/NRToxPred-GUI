@@ -2,6 +2,10 @@
 
 This guide walks you through installing, configuring, and using the NR-ToxPred desktop application.
 
+> **Citation:** If you use NR-ToxPred in your research, please cite:
+> Predicting the binding of small molecules to nuclear receptors using machine learning.
+> *Brief Bioinform.* 2022 May 13;23(3):bbac114. doi: [10.1093/bib/bbac114](https://doi.org/10.1093/bib/bbac114)
+
 ---
 
 ## Table of Contents

@@ -7,32 +7,49 @@ echo "   NR-ToxPred  |  Starting..."
 echo " ============================================="
 echo ""
 
-# ── Check conda ───────────────────────────────────────────────────────────────
-if ! command -v conda &>/dev/null; then
+# ── Find conda ────────────────────────────────────────────────────────────────
+CONDA_EXE=""
+
+if command -v conda &>/dev/null; then
+    CONDA_EXE="conda"
+elif [ -f ".conda_path.txt" ]; then
+    CONDA_EXE=$(cat .conda_path.txt)
+else
+    for P in \
+        "$HOME/miniconda3/bin/conda" \
+        "$HOME/Miniconda3/bin/conda" \
+        "$HOME/anaconda3/bin/conda" \
+        "/opt/miniconda3/bin/conda"
+    do
+        if [ -x "$P" ]; then CONDA_EXE="$P"; break; fi
+    done
+fi
+
+if [ -z "$CONDA_EXE" ] || [ ! -x "$CONDA_EXE" ] && ! command -v "$CONDA_EXE" &>/dev/null; then
     echo " [ERROR] Conda not found."
     echo " Please run install.sh first."
     echo ""
     exit 1
 fi
 
-# ── Check environment exists ──────────────────────────────────────────────────
-if ! conda env list | grep -q "nrtoxpred"; then
-    echo " [ERROR] The nrtoxpred environment is not installed."
+# ── Check the nrtoxpred environment exists ────────────────────────────────────
+if ! "$CONDA_EXE" env list | grep -q "nrtoxpred"; then
+    echo " [ERROR] NR-ToxPred environment not found."
     echo " Please run install.sh first."
     echo ""
     exit 1
 fi
 
-# ── Launch app ────────────────────────────────────────────────────────────────
+# ── Launch the application ────────────────────────────────────────────────────
 echo " Launching NR-ToxPred GUI..."
-echo " (A setup window may appear on first launch to download models)"
+echo " (A download window may appear on first launch to fetch the models)"
 echo ""
 
-conda run -n nrtoxpred python pytox_gui.py
+"$CONDA_EXE" run -n nrtoxpred python pytox_gui.py
 
 if [ $? -ne 0 ]; then
     echo ""
-    echo " [ERROR] The application crashed or failed to start."
-    echo " Make sure install.sh completed successfully."
+    echo " [ERROR] The application failed to start."
+    echo " Try running install.sh again to repair the installation."
     echo ""
 fi

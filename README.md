@@ -8,23 +8,22 @@ A standalone desktop application for predicting the toxicity of chemical compoun
 
 ## Quick Start (No Python experience needed)
 
-**Step 1 — Install Miniconda** (one-time, skip if already installed)
-Download and install from: https://docs.conda.io/en/latest/miniconda.html
+**Step 1 — Download this repository**
+Click the green **Code** button above → **Download ZIP** → Extract the ZIP folder anywhere on your computer
 
-**Step 2 — Download this repository**
-Click the green **Code** button above → **Download ZIP** → Extract it
-
-**Step 3 — Install** (one-time)
+**Step 2 — Install** (one-time, ~10–20 minutes)
 - **Windows:** Double-click `install.bat`
 - **Mac / Linux:** Open a terminal in the folder and run `bash install.sh`
 
-Installation takes 5–15 minutes. When it finishes, you are ready.
+> The installer automatically downloads Python (Miniconda) and all required packages for you. No prior setup needed.
 
-**Step 4 — Run the app**
+**Step 3 — Run the app**
 - **Windows:** Double-click `run.bat`
 - **Mac / Linux:** Run `bash run.sh`
 
-On first launch the app will offer to automatically download the prediction models (~250 MB).
+On first launch, click **Download** when prompted to fetch the prediction models (~250 MB).
+
+> Steps 1–2 are one-time only. After that, just use Step 3 every time.
 
 ---
 
@@ -159,7 +158,11 @@ The **Scutoff** (similarity threshold) and **Nsimilar** (minimum neighbor count)
 
 ## Citation
 
-If you use NR-ToxPred in your research, please cite the original work.
+If you use NR-ToxPred in your research, please cite:
+
+> Predicting the binding of small molecules to nuclear receptors using machine learning.
+> *Brief Bioinform.* 2022 May 13;23(3):bbac114.
+> doi: [10.1093/bib/bbac114](https://doi.org/10.1093/bib/bbac114)
 
 ---
 

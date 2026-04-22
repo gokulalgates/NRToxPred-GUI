@@ -8,48 +8,89 @@ echo    NR-ToxPred  ^|  One-Time Installation
 echo  =============================================
 echo.
 
-:: ── Check conda ──────────────────────────────────────────────────────────────
+:: ── Find conda (check PATH and common install locations) ─────────────────────
+set "CONDA_EXE="
+
 where conda >nul 2>&1
+if %errorlevel% equ 0 (
+    set "CONDA_EXE=conda"
+    echo  [OK] Conda already installed.
+    goto :setup_env
+)
+
+for %%P in (
+    "%UserProfile%\miniconda3\Scripts\conda.exe"
+    "%UserProfile%\Miniconda3\Scripts\conda.exe"
+    "%UserProfile%\anaconda3\Scripts\conda.exe"
+    "%LocalAppData%\miniconda3\Scripts\conda.exe"
+    "C:\ProgramData\miniconda3\Scripts\conda.exe"
+    "C:\ProgramData\Miniconda3\Scripts\conda.exe"
+) do (
+    if exist %%P (
+        set "CONDA_EXE=%%~P"
+        echo  [OK] Conda found at %%~P
+        goto :setup_env
+    )
+)
+
+:: ── Miniconda not found — download and install it silently ───────────────────
+echo  Miniconda not found. Downloading it now...
+echo  (Miniconda is a free, lightweight Python package manager)
+echo.
+
+set "MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "MINICONDA_INSTALLER=%TEMP%\miniconda_installer.exe"
+set "MINICONDA_DIR=%UserProfile%\miniconda3"
+
+echo  [1/3] Downloading Miniconda (~90 MB) ...
+powershell -NoProfile -Command ^
+  "Invoke-WebRequest -Uri '%MINICONDA_URL%' -OutFile '%MINICONDA_INSTALLER%' -UseBasicParsing"
 if %errorlevel% neq 0 (
-    echo  [ERROR] Conda (Miniconda) is not installed.
     echo.
-    echo  Please download and install Miniconda first:
-    echo    https://docs.conda.io/en/latest/miniconda.html
-    echo.
-    echo  After installing Miniconda, close this window,
-    echo  open a NEW terminal, and run install.bat again.
-    echo.
+    echo  [ERROR] Download failed. Check your internet connection and try again.
     pause
     exit /b 1
 )
 
-echo  [OK] Conda found.
-echo.
-
-:: ── Create or update environment ─────────────────────────────────────────────
-echo  [1/2] Setting up Python environment...
-echo        (This can take 5-15 minutes on the first run)
-echo.
-
-conda env create -f environment_setup.yml 2>nul
+echo  [2/3] Installing Miniconda (this takes about 1 minute) ...
+start /wait "" "%MINICONDA_INSTALLER%" /S /D=%MINICONDA_DIR%
 if %errorlevel% neq 0 (
-    echo  Environment already exists — updating instead...
-    conda env update -f environment_setup.yml --prune
+    echo.
+    echo  [ERROR] Miniconda installation failed.
+    pause
+    exit /b 1
 )
 
+set "CONDA_EXE=%MINICONDA_DIR%\Scripts\conda.exe"
+echo  [OK] Miniconda installed successfully.
+echo.
+
+:setup_env
+:: ── Create (or update) the nrtoxpred conda environment ───────────────────────
+echo  [3/3] Setting up the NR-ToxPred Python environment...
+echo        (This can take 5-15 minutes — please be patient)
+echo.
+
+"%CONDA_EXE%" env create -f environment_setup.yml
+if %errorlevel% neq 0 (
+    echo  Environment already exists, updating instead...
+    "%CONDA_EXE%" env update -f environment_setup.yml --prune
+)
 if %errorlevel% neq 0 (
     echo.
     echo  [ERROR] Environment setup failed.
-    echo  Please check the error above or contact support.
+    echo  Please take a screenshot of this window and contact support.
     pause
     exit /b 1
 )
 
-echo.
-echo  [2/2] Installation complete!
+:: ── Save conda path for run.bat ───────────────────────────────────────────────
+echo %CONDA_EXE%> .conda_path.txt
+
 echo.
 echo  =============================================
-echo    Run NR-ToxPred by double-clicking run.bat
+echo    Installation complete!
+echo    Double-click run.bat to launch NR-ToxPred.
 echo  =============================================
 echo.
 pause
