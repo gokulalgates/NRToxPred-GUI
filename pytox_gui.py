@@ -49,7 +49,8 @@ def download_models_from_hf(progress_cb=None):
             "Run:  pip install huggingface_hub")
 
     api   = HfApi()
-    files = list(list_repo_files(HF_REPO, repo_type="model"))
+    files = [f for f in list_repo_files(HF_REPO, repo_type="model")
+             if not f.startswith(".")]   # skip .gitattributes etc.
     total = len(files)
     for i, filename in enumerate(files, 1):
         if progress_cb:
@@ -61,6 +62,7 @@ def download_models_from_hf(progress_cb=None):
             filename=filename,
             repo_type="model",
             local_dir=SCRIPT_DIR,
+            local_dir_use_symlinks=False,   # required on Windows (no admin symlinks)
         )
 
 # ── heavy scientific imports ──────────────────────────────────────────────────
@@ -505,9 +507,10 @@ class NRToxPredApp(tk.Tk):
     # ── theming ───────────────────────────────────────────────────────────────
     def _apply_style(self):
         s = ttk.Style(self)
-        # Use the best available native-looking theme
         available = s.theme_names()
-        for preferred in ("vista", "aqua", "winnative", "clam", "alt", "default"):
+        # vista/winnative (Windows native) ignore custom button foreground colors,
+        # so we skip them and use clam which respects all style settings.
+        for preferred in ("aqua", "clam", "alt", "default"):
             if preferred in available:
                 s.theme_use(preferred)
                 break
