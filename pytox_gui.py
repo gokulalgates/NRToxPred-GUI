@@ -19,7 +19,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
 
 # ── Hugging Face model auto-download ─────────────────────────────────────────
-HF_REPO = ""   # set to "YourName/nrtoxpred-models" after uploading
+HF_REPO = "gokulalgates/nrtoxpred-models"
 
 def _models_present() -> bool:
     """Return True if the minimum required SVM models exist locally."""

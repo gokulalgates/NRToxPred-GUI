@@ -6,8 +6,14 @@ Usage:
     huggingface-cli login          # paste your HF write token
     python upload_models_to_hf.py --repo YOUR_HF_USERNAME/nrtoxpred-models
 
-The script only uploads the SVM models (morgan + MACCS) and X_train files.
-SuperLearner models are excluded because they are 1-1.5 GB each.
+Uploads (~250 MB total):
+  - SVM models: MODELS/morgan/*svm_best.model, MODELS/MACCS/*svm_best.model
+  - Label encoder: MODELS/ARclasses.npy
+  - AD training data: X_train/*.xlsx
+
+Excluded (not needed by the GUI):
+  - SuperLearner models (*_SL.model, *SL.model)  — 1-1.5 GB each
+  - Distance/fp train matrices (*_train_*.model)  — 4.7 GB total
 """
 
 import argparse
@@ -20,10 +26,8 @@ def collect_files(base: Path):
     patterns = [
         # SVM models — morgan
         ("MODELS/morgan/*svm_best.model",   "MODELS/morgan"),
-        ("MODELS/morgan/*_train_*.model",   "MODELS/morgan"),
         # SVM models — MACCS
         ("MODELS/MACCS/*svm_best.model",    "MODELS/MACCS"),
-        ("MODELS/MACCS/*_train_*.model",    "MODELS/MACCS"),
         # Label encoder
         ("MODELS/ARclasses.npy",            "MODELS"),
         # X_train applicability-domain data
