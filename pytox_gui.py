@@ -3,6 +3,7 @@ NR-ToxPred GUI — standalone tkinter application.
 Run from the Pytox directory:  python pytox_gui.py
 """
 
+import argparse
 import os
 import sys
 import re
@@ -10,8 +11,13 @@ import pickle
 import warnings
 import queue
 import threading
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+    _HAS_TK = True
+except ImportError:
+    _HAS_TK = False
 
 warnings.filterwarnings("ignore")
 
@@ -1482,10 +1488,206 @@ class DownloadDialog(tk.Toplevel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Command-line interface
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="python pytox_gui.py",
+        description="NR-ToxPred: Nuclear Receptor Toxicity Predictor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  # single compound\n"
+            "  python pytox_gui.py --no-gui --smiles \"CC(=O)Oc1ccccc1C(=O)O\" --name Aspirin\n\n"
+            "  # save to file\n"
+            "  python pytox_gui.py --no-gui --smiles \"CC(=O)...\" --output results.csv\n\n"
+            "  # batch from CSV\n"
+            "  python pytox_gui.py --no-gui --csv compounds.csv --smiles-col SMILES --output results.xlsx\n\n"
+            "  # specific receptors only\n"
+            "  python pytox_gui.py --no-gui --smiles \"...\" --receptors AR ERA ERB\n"
+        ),
+    )
+    p.add_argument("--no-gui", action="store_true",
+                   help="run in command-line mode (no window)")
+    p.add_argument("--smiles", metavar="SMILES",
+                   help="SMILES string for single-compound prediction")
+    p.add_argument("--name", default="Compound",
+                   help="compound name label (default: Compound)")
+    p.add_argument("--csv", metavar="FILE",
+                   help="CSV or Excel file for batch prediction")
+    p.add_argument("--smiles-col", default="SMILES", metavar="COL",
+                   help="column name containing SMILES in the CSV (default: SMILES)")
+    p.add_argument("--fp", choices=["morgan", "maccs"], default="morgan",
+                   help="fingerprint type (default: morgan)")
+    p.add_argument("--algo", choices=["svm", "superlearner"], default="svm",
+                   help="algorithm (default: svm)")
+    p.add_argument("--receptors", nargs="+", metavar="R", default=None,
+                   help="receptors to predict; default is all nine. "
+                        "choices: AR ERA ERB FXR GR PPARD PPARG PR RXR")
+    p.add_argument("--scutoff", type=float, default=0.25,
+                   help="AD Tanimoto similarity cutoff 0–1 (default: 0.25)")
+    p.add_argument("--nsimilar", type=int, default=1,
+                   help="AD minimum similar neighbours (default: 1)")
+    p.add_argument("--output", metavar="FILE",
+                   help="output file (.csv or .xlsx); prints table to stdout if omitted")
+    return p
+
+
+def _cli_single(args, receptors: list):
+    """CLI: predict one compound and print / save results."""
+    print(f"Predicting: {args.name}  [{args.fp} / {args.algo}]")
+    try:
+        desc, results = predict_single(
+            args.smiles, args.name, args.fp, args.algo,
+            receptors, args.nsimilar, args.scutoff)
+    except Exception as e:
+        sys.exit(f"Prediction failed: {e}")
+
+    # ── descriptors ───────────────────────────────────────────────────────────
+    print(f"\nCompound : {args.name}")
+    print(f"SMILES   : {args.smiles}\n")
+    print("Molecular Descriptors:")
+    for k, v in desc.items():
+        print(f"  {k:<14}: {v}")
+
+    # ── results table ─────────────────────────────────────────────────────────
+    print("\nPrediction Results:")
+    hdr = f"  {'Receptor':<10} {'Activity':<12} {'Active%':>8} {'Inactive%':>10}  {'AD'}"
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    for r in results:
+        print(f"  {r['Receptor']:<10} {r['Activity']:<12} "
+              f"{str(r['Active%']):>8} {str(r['Inactive%']):>10}  {r['AD']}")
+
+    # ── optional file output ───────────────────────────────────────────────────
+    if args.output:
+        rows = [{**{"Name": args.name, "SMILES": args.smiles}, **r} for r in results]
+        df = pd.DataFrame(rows)
+        _cli_save(df, args.output)
+        print(f"\nSaved to: {args.output}")
+
+
+def _cli_batch(args, receptors: list):
+    """CLI: run batch prediction from a CSV/Excel file."""
+    # ── load input ─────────────────────────────────────────────────────────────
+    try:
+        if args.csv.lower().endswith((".xlsx", ".xls")):
+            df_in = pd.read_excel(args.csv)
+        else:
+            df_in = pd.read_csv(args.csv)
+    except Exception as e:
+        sys.exit(f"Could not read '{args.csv}': {e}")
+
+    if args.smiles_col not in df_in.columns:
+        sys.exit(
+            f"Column '{args.smiles_col}' not found in file.\n"
+            f"Available columns: {list(df_in.columns)}\n"
+            f"Use --smiles-col to specify the correct column name.")
+
+    df_in = df_in.rename(columns={args.smiles_col: "SMILES"})
+    print(f"Batch predicting {len(df_in)} compounds  [{args.fp} / {args.algo}]")
+
+    def _progress(idx, total, rec_name):
+        bar = "#" * int(20 * idx / max(total, 1))
+        print(f"\r  [{bar:<20}] {idx}/{total}  {rec_name:<12}", end="", flush=True)
+
+    try:
+        results_by_rec = predict_batch(
+            df_in, args.fp, args.algo, receptors,
+            args.nsimilar, args.scutoff, _progress)
+    except Exception as e:
+        print()
+        sys.exit(f"Batch prediction failed: {e}")
+    print()  # newline after progress bar
+
+    # ── save / print ──────────────────────────────────────────────────────────
+    if args.output:
+        if args.output.lower().endswith(".xlsx"):
+            with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
+                for rec, rdf in results_by_rec.items():
+                    rdf.to_excel(writer, sheet_name=rec, index=False)
+        else:
+            combined = pd.concat(
+                [rdf.assign(Receptor=rec) for rec, rdf in results_by_rec.items()],
+                ignore_index=True)
+            combined = combined[["Receptor"] + [c for c in combined.columns
+                                                if c != "Receptor"]]
+            combined.to_csv(args.output, index=False)
+        print(f"Saved to: {args.output}")
+    else:
+        for rec, rdf in results_by_rec.items():
+            print(f"\n── {rec} ──")
+            print(rdf.to_string(index=False))
+
+
+def _cli_save(df: "pd.DataFrame", path: str):
+    if path.lower().endswith(".xlsx"):
+        df.to_excel(path, index=False, engine="openpyxl")
+    else:
+        df.to_csv(path, index=False)
+
+
+def _cli_main(args):
+    """Dispatch CLI prediction after validating args and environment."""
+    if not IMPORTS_OK:
+        sys.exit(
+            f"Missing dependencies: {IMPORT_ERROR}\n"
+            "Activate the conda environment first:\n"
+            "  conda activate nrtoxpred")
+
+    if not _models_present():
+        sys.exit(
+            f"Model files not found in: {_DEFAULT_MODELS_BASE}\n"
+            "Run the GUI to download them:\n"
+            "  python pytox_gui.py")
+
+    if args.smiles and args.csv:
+        sys.exit("Specify either --smiles or --csv, not both.")
+    if not args.smiles and not args.csv:
+        sys.exit("Specify --smiles SMILES or --csv FILE.\n"
+                 "Run with --help to see all options.")
+
+    # Normalise + validate receptor list
+    receptors = [r.upper() for r in (args.receptors or BINARY_RECEPTORS)]
+    invalid = [r for r in receptors if r not in BINARY_RECEPTORS]
+    if invalid:
+        sys.exit(f"Unknown receptors: {invalid}\n"
+                 f"Valid choices: {' '.join(BINARY_RECEPTORS)}")
+
+    # Check model exists for chosen algorithm
+    probe = _model_path(args.fp, receptors[0], args.algo)
+    if not os.path.exists(probe):
+        sys.exit(
+            f"No {args.algo.upper()} models found for '{args.fp}' fingerprint.\n" +
+            ("SuperLearner models (~12 GB) were not downloaded.\n"
+             "Switch --algo svm, or run the GUI and choose 'Download All'."
+             if args.algo == "superlearner" else
+             "Run the GUI to download models: python pytox_gui.py"))
+
+    if args.smiles:
+        _cli_single(args, receptors)
+    else:
+        _cli_batch(args, receptors)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = _build_parser()
+    args   = parser.parse_args()
+
+    if args.no_gui:
+        _cli_main(args)
+        return
+
+    # ── GUI mode ──────────────────────────────────────────────────────────────
+    if not _HAS_TK:
+        sys.exit("tkinter is not available on this system.\n"
+                 "Use --no-gui for command-line mode.")
+
     if not IMPORTS_OK:
         root = tk.Tk()
         root.withdraw()
