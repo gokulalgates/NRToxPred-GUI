@@ -6,12 +6,12 @@ dependencies:
   - python=3.8
   - rdkit
   - openbabel
+  - numpy=1.23        # scikit-learn 0.23.2 is incompatible with numpy >= 1.24
   - pip
   - pip:
     - molvs
     - scikit-learn==0.23.2
     - pandas
-    - numpy
     - scipy
     - openpyxl
     - Pillow

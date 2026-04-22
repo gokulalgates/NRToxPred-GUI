@@ -69,16 +69,19 @@ echo  [OK] Miniconda installed successfully.
 echo.
 
 :setup_env
-:: ── Create (or update) the nrtoxpred conda environment ───────────────────────
+:: ── Remove old environment if it exists (ensures version pins are respected) ──
+"%CONDA_EXE%" env list | find "nrtoxpred" >nul 2>&1
+if %errorlevel% equ 0 (
+    echo  Removing old environment to apply updates...
+    "%CONDA_EXE%" env remove -n nrtoxpred -y
+)
+
+:: ── Create the nrtoxpred conda environment ────────────────────────────────────
 echo  [3/3] Setting up the NR-ToxPred Python environment...
 echo        (This can take 5-15 minutes — please be patient)
 echo.
 
 "%CONDA_EXE%" env create -f environment_setup.yml
-if %errorlevel% neq 0 (
-    echo  Environment already exists, updating instead...
-    "%CONDA_EXE%" env update -f environment_setup.yml --prune
-)
 if %errorlevel% neq 0 (
     echo.
     echo  [ERROR] Environment setup failed.

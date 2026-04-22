@@ -87,17 +87,18 @@ source "$CONDA_BASE/etc/profile.d/conda.sh" 2>/dev/null || true
 echo "$CONDA_EXE" > .conda_path.txt
 chmod +x run.sh
 
-# ── Create or update the nrtoxpred environment ───────────────────────────────
+# ── Remove old environment if it exists (ensures version pins are respected) ──
+if "$CONDA_EXE" env list | grep -q "nrtoxpred"; then
+    echo " Removing old environment to apply updates..."
+    "$CONDA_EXE" env remove -n nrtoxpred -y
+fi
+
+# ── Create the nrtoxpred environment ─────────────────────────────────────────
 echo " [3/3] Setting up the NR-ToxPred Python environment..."
 echo "       (This can take 5-15 minutes — please be patient)"
 echo ""
 
-if "$CONDA_EXE" env create -f environment_setup.yml 2>/dev/null; then
-    echo " Environment created."
-else
-    echo " Environment already exists, updating instead..."
-    "$CONDA_EXE" env update -f environment_setup.yml --prune
-fi
+"$CONDA_EXE" env create -f environment_setup.yml
 
 echo ""
 echo " ============================================="
