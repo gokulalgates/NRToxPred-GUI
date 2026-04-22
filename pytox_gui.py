@@ -18,17 +18,40 @@ warnings.filterwarnings("ignore")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
 
+# ── Model storage location ────────────────────────────────────────────────────
+# On Windows, download to AppData\Local\NRToxPred so OneDrive never interferes.
+# On Mac/Linux, use the script directory as before.
+import platform as _platform
+if _platform.system() == "Windows":
+    _appdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    _DEFAULT_MODELS_BASE = os.path.join(_appdata, "NRToxPred")
+else:
+    _DEFAULT_MODELS_BASE = SCRIPT_DIR
+
+def _get_models_base() -> str:
+    """Return the directory that contains the MODELS/ and X_train/ folders.
+    Checks the AppData location first (downloaded), then falls back to
+    the script directory (manual placement)."""
+    probe = os.path.join("MODELS", "morgan", "ARsvm_best.model")
+    for base in [_DEFAULT_MODELS_BASE, SCRIPT_DIR]:
+        if os.path.exists(os.path.join(base, probe)):
+            return base
+    return _DEFAULT_MODELS_BASE  # default destination for new downloads
+
 # ── Hugging Face model auto-download ─────────────────────────────────────────
 HF_REPO = "gokulalgates/nrtoxpred-models"
 
 def _models_present() -> bool:
-    """Return True if the minimum required SVM models exist locally."""
-    required = [
-        "MODELS/morgan/ARsvm_best.model",
-        "MODELS/ARclasses.npy",
-        "X_train/AR.xlsx",
+    """Return True if the minimum required SVM models exist in any known location."""
+    probe = [
+        os.path.join("MODELS", "morgan", "ARsvm_best.model"),
+        os.path.join("MODELS", "ARclasses.npy"),
+        os.path.join("X_train", "AR.xlsx"),
     ]
-    return all(os.path.exists(p) for p in required)
+    for base in [_DEFAULT_MODELS_BASE, SCRIPT_DIR]:
+        if all(os.path.exists(os.path.join(base, p)) for p in probe):
+            return True
+    return False
 
 
 def download_models_from_hf(progress_cb=None, svm_only=False):
@@ -67,11 +90,15 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
     if progress_cb:
         progress_cb(f"Downloading {total} files — please wait…", 0, total)
 
-    # snapshot_download writes directly to local_dir without cache/symlink issues
+    # Download to AppData\Local\NRToxPred on Windows (avoids OneDrive sync issues),
+    # or to the script directory on Mac/Linux.
+    dest = _DEFAULT_MODELS_BASE
+    os.makedirs(dest, exist_ok=True)
+
     snapshot_download(
         repo_id=HF_REPO,
         repo_type="model",
-        local_dir=SCRIPT_DIR,
+        local_dir=dest,
         ignore_patterns=ignore,
     )
 
@@ -153,7 +180,7 @@ def _load_adfs(fp_type: str, receptor: str):
         if key in _adfs_cache:
             return _adfs_cache[key]
 
-    xtrain_file = f"X_train/{receptor}.xlsx"
+    xtrain_file = os.path.join(_get_models_base(), "X_train", f"{receptor}.xlsx")
     if not os.path.exists(xtrain_file):
         with _cache_lock:
             _adfs_cache[key] = None
@@ -203,10 +230,9 @@ def prewarm_cache(fp_types=("morgan", "maccs"), algorithm="svm",
 # ── Chemistry helpers ─────────────────────────────────────────────────────────
 
 def _model_path(fp_type: str, receptor: str, algorithm: str) -> str:
-    base = f"MODELS/{'morgan' if fp_type == 'morgan' else 'MACCS'}/"
-    if algorithm == "svm":
-        return base + receptor + "svm_best.model"
-    return base + receptor + "_SL.model"
+    folder = "morgan" if fp_type == "morgan" else "MACCS"
+    fname  = (receptor + "svm_best.model") if algorithm == "svm" else (receptor + "_SL.model")
+    return os.path.join(_get_models_base(), "MODELS", folder, fname)
 
 
 def _standardize_smiles(smiles: str):
@@ -1311,6 +1337,7 @@ class DownloadDialog(tk.Toplevel):
             "Choose which models to download from Hugging Face:\n\n"
             "  • SVM only  (~250 MB, fast download, recommended)\n"
             "  • SVM + SuperLearner  (~12 GB, slower but more accurate)\n\n"
+            f"Models will be saved to:\n  {_DEFAULT_MODELS_BASE}\n\n"
             "Or close this dialog if you will copy the files manually."
         )
         tk.Label(self, text=msg, justify="left",

@@ -1,11 +1,19 @@
 
 import os
 import sys
+import platform
 
 HF_REPO = "gokulalgates/nrtoxpred-models"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def download_models_from_hf(progress_cb=None, svm_only=False):
+# On Windows, download to AppData\Local\NRToxPred to avoid OneDrive sync issues
+if platform.system() == "Windows":
+    _appdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    DEST_DIR = os.path.join(_appdata, "NRToxPred")
+else:
+    DEST_DIR = SCRIPT_DIR
+
+def download_models_from_hf(svm_only=False):
     if not HF_REPO:
         raise ValueError("HF_REPO is not set")
     try:
@@ -24,13 +32,13 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
         files = all_files
         ignore = ["README.md", ".gitattributes"]
 
-    total = len(files)
-    print(f"Downloading {total} files to {SCRIPT_DIR}...")
+    os.makedirs(DEST_DIR, exist_ok=True)
+    print(f"Downloading {len(files)} files to: {DEST_DIR}")
 
     snapshot_download(
         repo_id=HF_REPO,
         repo_type="model",
-        local_dir=SCRIPT_DIR,
+        local_dir=DEST_DIR,
         ignore_patterns=ignore,
     )
     print("Download complete!")
