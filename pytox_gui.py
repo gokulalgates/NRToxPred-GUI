@@ -282,13 +282,24 @@ def _standardize_smiles(smiles: str):
     return mol, data["can_smiles"][0], data
 
 
-def _make_fp_array(mol, fp_type: str):
-    """Return (numpy bit-array, nBits) for a single molecule."""
-    if fp_type == "morgan":
-        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=1024)
-        return np.array(list(fp), dtype=np.uint8), 1024
-    fp = MACCSkeys.GenMACCSKeys(mol)
-    return np.array(list(fp), dtype=np.uint8), 167
+try:
+    from rdkit.Chem import rdFingerprintGenerator as _rfg
+    _morgan_gen = _rfg.GetMorganGenerator(radius=3, fpSize=1024)
+    def _make_fp_array(mol, fp_type: str):
+        """Return (numpy bit-array, nBits) for a single molecule."""
+        if fp_type == "morgan":
+            fp = _morgan_gen.GetFingerprint(mol)
+            return np.array(list(fp), dtype=np.uint8), 1024
+        fp = MACCSkeys.GenMACCSKeys(mol)
+        return np.array(list(fp), dtype=np.uint8), 167
+except ImportError:
+    def _make_fp_array(mol, fp_type: str):
+        """Return (numpy bit-array, nBits) for a single molecule."""
+        if fp_type == "morgan":
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, nBits=1024)
+            return np.array(list(fp), dtype=np.uint8), 1024
+        fp = MACCSkeys.GenMACCSKeys(mol)
+        return np.array(list(fp), dtype=np.uint8), 167
 
 
 def _calc_descriptors(mol) -> dict:
