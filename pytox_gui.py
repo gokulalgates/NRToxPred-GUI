@@ -31,26 +31,33 @@ def _models_present() -> bool:
     return all(os.path.exists(p) for p in required)
 
 
-def download_models_from_hf(progress_cb=None):
+def download_models_from_hf(progress_cb=None, svm_only=False):
     """
-    Download MODELS/ and X_train/ from Hugging Face Hub.
+    Download models from Hugging Face Hub.
+    svm_only=True downloads SVM models only (~250 MB).
+    svm_only=False downloads SVM + SuperLearner (~12 GB).
     progress_cb(filename, current, total) is called for each file.
-    Set HF_REPO at the top of this file before calling.
     """
     if not HF_REPO:
         raise ValueError(
             "HF_REPO is not set in pytox_gui.py.\n"
             "Edit the file and set HF_REPO = 'YourName/nrtoxpred-models'.")
     try:
-        from huggingface_hub import HfApi, hf_hub_download, list_repo_files
+        from huggingface_hub import hf_hub_download, list_repo_files
     except ImportError:
         raise ImportError(
             "huggingface_hub is not installed.\n"
             "Run:  pip install huggingface_hub")
 
-    api   = HfApi()
-    files = [f for f in list_repo_files(HF_REPO, repo_type="model")
-             if not f.startswith(".")]   # skip .gitattributes etc.
+    all_files = [f for f in list_repo_files(HF_REPO, repo_type="model")
+                 if not f.startswith(".")]
+
+    if svm_only:
+        # Keep SVM models, X_train, ARclasses — skip *_SL.model
+        files = [f for f in all_files if "_SL.model" not in f]
+    else:
+        files = all_files
+
     total = len(files)
     for i, filename in enumerate(files, 1):
         if progress_cb:
@@ -1294,32 +1301,41 @@ class DownloadDialog(tk.Toplevel):
                  font=FONT_HEAD).pack(**pad)
 
         msg = (
-            f"The MODELS/ and X_train/ directories were not found.\n\n"
-            f"They can be downloaded automatically from Hugging Face:\n"
-            f"  {HF_REPO if HF_REPO else '(HF_REPO not set in pytox_gui.py)'}\n\n"
-            "This will download ~320 MB of SVM model files.\n"
-            "Or close this dialog and copy the files manually."
+            "The prediction models were not found on this computer.\n"
+            "Choose which models to download from Hugging Face:\n\n"
+            "  • SVM only  (~250 MB, fast download, recommended)\n"
+            "  • SVM + SuperLearner  (~12 GB, slower but more accurate)\n\n"
+            "Or close this dialog if you will copy the files manually."
         )
         tk.Label(self, text=msg, justify="left",
-                 wraplength=420).pack(**pad)
+                 wraplength=440).pack(**pad)
 
-        self.prog = ttk.Progressbar(self, length=420, mode="determinate")
+        self.prog = ttk.Progressbar(self, length=440, mode="determinate")
         self.prog.pack(padx=20, pady=4)
 
         self.status = tk.Label(self, text="", font=FONT_SMALL,
-                               fg=COLORS["subtext"], wraplength=420)
+                               fg=COLORS["subtext"], wraplength=440)
         self.status.pack(**pad)
 
         btn_row = tk.Frame(self)
         btn_row.pack(pady=(0, 16))
-        self.dl_btn = ttk.Button(btn_row, text="Download from Hugging Face",
-                                 command=self._start_download)
-        self.dl_btn.pack(side="left", padx=8)
-        ttk.Button(btn_row, text="Skip / Use Local Files",
+        self.dl_svm_btn = ttk.Button(btn_row, text="Download SVM only  (~250 MB)",
+                                     command=self._start_svm)
+        self.dl_svm_btn.pack(side="left", padx=6)
+        self.dl_all_btn = ttk.Button(btn_row, text="Download All  (~12 GB)",
+                                     command=self._start_all)
+        self.dl_all_btn.pack(side="left", padx=6)
+        ttk.Button(btn_row, text="Skip",
                    command=self._cancel,
-                   style="Secondary.TButton").pack(side="left", padx=8)
+                   style="Secondary.TButton").pack(side="left", padx=6)
 
-    def _start_download(self):
+    def _start_svm(self):
+        self._start_download(svm_only=True)
+
+    def _start_all(self):
+        self._start_download(svm_only=False)
+
+    def _start_download(self, svm_only=True):
         if not HF_REPO:
             messagebox.showerror(
                 "HF_REPO not set",
@@ -1328,15 +1344,17 @@ class DownloadDialog(tk.Toplevel):
                 "  HF_REPO = 'YourName/nrtoxpred-models'",
                 parent=self)
             return
-        self.dl_btn.config(state="disabled")
-        threading.Thread(target=self._download_thread, daemon=True).start()
+        self.dl_svm_btn.config(state="disabled")
+        self.dl_all_btn.config(state="disabled")
+        threading.Thread(target=self._download_thread,
+                         args=(svm_only,), daemon=True).start()
 
-    def _download_thread(self):
+    def _download_thread(self, svm_only):
         try:
             def cb(fname, cur, total):
                 short = os.path.basename(fname)
                 self.after(0, lambda: self._update(short, cur, total))
-            download_models_from_hf(progress_cb=cb)
+            download_models_from_hf(progress_cb=cb, svm_only=svm_only)
             self.after(0, self._done)
         except Exception as e:
             self.after(0, lambda: self._error(str(e)))
