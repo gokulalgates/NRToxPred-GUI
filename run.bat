@@ -80,14 +80,26 @@ if %APP_EXIT% neq 0 (
         for %%A in (error.log) do if %%~zA gtr 0 (
             type error.log
         ) else (
-            echo  (no output captured - possible C-level crash or missing DLL)
+            echo  (no output in error.log - checking crash.log for C-level details)
             echo.
-            echo  Diagnostics:
+            if exist crash.log (
+                for %%B in (crash.log) do if %%~zB gtr 0 (
+                    echo  === crash.log contents ===
+                    type crash.log
+                ) else (
+                    echo  crash.log is also empty - crash happened before Python started
+                )
+            ) else (
+                echo  crash.log not found - crash happened before Python started
+            )
+            echo.
+            echo  === Diagnostics ===
             "%PYTHON_EXE%" --version
+            "%PYTHON_EXE%" -c "import numpy; print('numpy', numpy.__version__)" 2>&1
             "%PYTHON_EXE%" -c "from rdkit import Chem; print('rdkit OK')" 2>&1
             "%PYTHON_EXE%" -c "import tkinter; print('tkinter OK')" 2>&1
-            "%PYTHON_EXE%" -c "import numpy; print('numpy', numpy.__version__)" 2>&1
             "%PYTHON_EXE%" -c "import sklearn; print('sklearn', sklearn.__version__)" 2>&1
+            "%PYTHON_EXE%" -c "from molvs import standardize_smiles; print('molvs OK')" 2>&1
         )
     )
     echo  -----------------------------------------------

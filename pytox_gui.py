@@ -4,6 +4,7 @@ Run from the Pytox directory:  python pytox_gui.py
 """
 
 import argparse
+import datetime
 import os
 import sys
 import re
@@ -21,15 +22,26 @@ except ImportError:
 
 warnings.filterwarnings("ignore")
 
-# Silence RDKit's C++ deprecation warnings (e.g. "please use MorganGenerator")
-# These go directly to stderr via C++ and cannot be suppressed with the
-# Python warnings module — use RDKit's own logger instead.
-try:
-    from rdkit import RDLogger as _RDLogger
-    _RDLogger.DisableLog("rdApp.warning")
-    _RDLogger.DisableLog("rdApp.error")
-except Exception:
-    pass
+# ── Crash log: written before every major import so a C-level segfault leaves
+# a breadcrumb trail in crash.log next to pytox_gui.py ───────────────────────
+_CRASH_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash.log")
+
+def _log(msg: str):
+    try:
+        with open(_CRASH_LOG, "a", encoding="utf-8") as _f:
+            _f.write(f"[{datetime.datetime.now():%H:%M:%S}] {msg}\n")
+            _f.flush()
+    except Exception:
+        pass
+
+import traceback as _traceback
+
+def _excepthook(et, ev, tb):
+    _log("UNHANDLED EXCEPTION:\n" + "".join(_traceback.format_exception(et, ev, tb)))
+    sys.__excepthook__(et, ev, tb)
+
+sys.excepthook = _excepthook
+_log("--- startup ---")
 
 # ── make sure relative model/X_train paths resolve correctly ──────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -142,22 +154,45 @@ def download_models_from_hf(progress_cb=None, svm_only=False):
         progress_cb("Download complete!", total, total)
 
 # ── heavy scientific imports ──────────────────────────────────────────────────
+IMPORTS_OK = False
+IMPORT_ERROR = ""
+_standardize_smiles_fn = None  # set below if molvs is available
+
 try:
+    _log("importing numpy")
     import numpy as np
+    _log("importing pandas")
     import pandas as pd
+    _log("importing PIL")
     from PIL import Image, ImageTk
+    _log("importing rdkit.Chem")
     from rdkit import Chem
+    _log("importing rdkit.Chem submodules")
     from rdkit.Chem import AllChem, MACCSkeys, Descriptors, rdMolDescriptors, Draw
     from rdkit.Chem.MolStandardize import rdMolStandardize
-    from molvs import standardize_smiles
+    _log("importing rdkit RDLogger")
+    from rdkit import RDLogger as _RDLogger
+    _RDLogger.DisableLog("rdApp.warning")
+    _RDLogger.DisableLog("rdApp.error")
+    _log("importing sklearn")
     from sklearn.preprocessing import LabelEncoder
-    # AD module lives inside the Django app but has no Django dependency
+    _log("importing pyAppDomain")
     sys.path.insert(0, SCRIPT_DIR)
     from toxi.pyAppDomain import AppDomainFpSimilarity
+    _log("all core imports OK")
     IMPORTS_OK = True
-except ImportError as _e:
-    IMPORTS_OK = False
+except Exception as _e:
     IMPORT_ERROR = str(_e)
+    _log(f"IMPORT FAILED: {_e}")
+
+# molvs is optional — fall back to rdkit-only standardization if absent
+try:
+    from molvs import standardize_smiles as _molvs_standardize
+    _standardize_smiles_fn = _molvs_standardize
+    _log("molvs OK")
+except Exception:
+    _standardize_smiles_fn = None
+    _log("molvs not available — using rdkit-only standardization")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core prediction helpers  (no Django / Celery dependency)
@@ -306,8 +341,13 @@ def _standardize_smiles(smiles: str):
     data = pd.DataFrame({"SMILES": [smiles]})
     data["STEROREMOVED"] = [re.sub(r"[/@\\]", "", s) for s in data["SMILES"]]
     data["can_smiles"] = [_rdkit_canonical(s) for s in data["STEROREMOVED"]]
-    std  = standardize_smiles(data["can_smiles"][0])
-    mol1 = Chem.MolFromSmiles(std)
+    can = data["can_smiles"][0]
+    if _standardize_smiles_fn is not None:
+        try:
+            can = _standardize_smiles_fn(can)
+        except Exception:
+            pass
+    mol1 = Chem.MolFromSmiles(can)
     if mol1 is None:
         raise ValueError("RDKit could not parse the standardized SMILES.")
     mol = rdMolStandardize.ChargeParent(mol1)
