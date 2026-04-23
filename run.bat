@@ -46,13 +46,14 @@ if not defined CONDA_EXE (
 )
 
 :found_conda
-:: ── Derive the conda base directory and Python executable ─────────────────────
+:: ── Derive the conda base directory ──────────────────────────────────────────
 for %%i in ("%CONDA_EXE%") do set "CONDA_SCRIPTS=%%~dpi"
 for %%i in ("%CONDA_SCRIPTS%\.") do set "CONDA_BASE=%%~dpi"
 :: Remove trailing backslash
 if "%CONDA_BASE:~-1%"=="\" set "CONDA_BASE=%CONDA_BASE:~0,-1%"
 
-set "PYTHON_EXE=%CONDA_BASE%\envs\nrtoxpred\python.exe"
+set "ENV_DIR=%CONDA_BASE%\envs\nrtoxpred"
+set "PYTHON_EXE=%ENV_DIR%\python.exe"
 
 if not exist "%PYTHON_EXE%" (
     echo  [ERROR] Python not found in the nrtoxpred environment.
@@ -62,6 +63,11 @@ if not exist "%PYTHON_EXE%" (
     pause
     exit /b 1
 )
+
+:: ── Set PATH so conda DLLs (rdkit, numpy, etc.) are found ────────────────────
+:: Running python.exe directly without conda activate skips the DLL search paths.
+:: We add them manually here so C extensions load correctly.
+set "PATH=%ENV_DIR%;%ENV_DIR%\Library\bin;%ENV_DIR%\Library\mingw-w64\bin;%ENV_DIR%\Library\usr\bin;%ENV_DIR%\Scripts;%PATH%"
 
 :: ── Launch the application ────────────────────────────────────────────────────
 echo  Launching NR-ToxPred GUI...
