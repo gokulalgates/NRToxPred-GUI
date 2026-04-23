@@ -68,16 +68,31 @@ echo  Launching NR-ToxPred GUI...
 echo  (A download window may appear on first launch to fetch the models)
 echo.
 
-"%PYTHON_EXE%" pytox_gui.py 2>error.log
+:: Capture both stdout and stderr so crash details are never blank
+"%PYTHON_EXE%" -u pytox_gui.py > error.log 2>&1
+set APP_EXIT=%errorlevel%
 
-if %errorlevel% neq 0 (
+if %APP_EXIT% neq 0 (
     echo.
-    echo  [ERROR] The application crashed. Error details:
+    echo  [ERROR] The application crashed (exit code %APP_EXIT%).
     echo  -----------------------------------------------
-    type error.log
+    if exist error.log (
+        for %%A in (error.log) do if %%~zA gtr 0 (
+            type error.log
+        ) else (
+            echo  (no output captured - possible C-level crash or missing DLL)
+            echo.
+            echo  Diagnostics:
+            "%PYTHON_EXE%" --version
+            "%PYTHON_EXE%" -c "from rdkit import Chem; print('rdkit OK')" 2>&1
+            "%PYTHON_EXE%" -c "import tkinter; print('tkinter OK')" 2>&1
+            "%PYTHON_EXE%" -c "import numpy; print('numpy', numpy.__version__)" 2>&1
+            "%PYTHON_EXE%" -c "import sklearn; print('sklearn', sklearn.__version__)" 2>&1
+        )
+    )
     echo  -----------------------------------------------
     echo.
-    echo  Please take a screenshot and contact support.
+    echo  Please take a screenshot of this window and report the issue.
     pause
 )
 

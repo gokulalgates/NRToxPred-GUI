@@ -21,6 +21,16 @@ except ImportError:
 
 warnings.filterwarnings("ignore")
 
+# Silence RDKit's C++ deprecation warnings (e.g. "please use MorganGenerator")
+# These go directly to stderr via C++ and cannot be suppressed with the
+# Python warnings module — use RDKit's own logger instead.
+try:
+    from rdkit import RDLogger as _RDLogger
+    _RDLogger.DisableLog("rdApp.warning")
+    _RDLogger.DisableLog("rdApp.error")
+except Exception:
+    pass
+
 # ── make sure relative model/X_train paths resolve correctly ──────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
@@ -184,6 +194,28 @@ def _get_encoder():
     return _encoder
 
 
+def _sl_predict_scores(model, X) -> "np.ndarray":
+    """
+    SuperLearner.predict may return shape (N,), (N,1), (N, k), or a list of rows.
+    Return a 1D float64 array with one score per input row.
+    X must be float (some stacks fail on uint8 bit vectors).
+    """
+    X = np.ascontiguousarray(X, dtype=np.float64)
+    n = int(X.shape[0])
+    y = model.predict(X)
+    a = np.asarray(y)
+    if a.shape == ():
+        return np.array([float(a)], dtype=np.float64)
+    try:
+        a = np.asarray(a, dtype=np.float64, order="C")
+        a = a.reshape(n, -1)
+    except (TypeError, ValueError):
+        raw = a.ravel() if a.size else a
+        seq = [float(np.ravel(x, order="C")[0]) for x in raw] if np.size(raw) else []
+        a = np.asarray(seq, dtype=np.float64).reshape(n, -1)
+    return a[:, 0]
+
+
 # ── Cached loaders ────────────────────────────────────────────────────────────
 
 def _load_model(path: str):
@@ -282,24 +314,14 @@ def _standardize_smiles(smiles: str):
     return mol, data["can_smiles"][0], data
 
 
-try:
-    from rdkit.Chem import rdFingerprintGenerator as _rfg
-    _morgan_gen = _rfg.GetMorganGenerator(radius=3, fpSize=1024)
-    def _make_fp_array(mol, fp_type: str):
-        """Return (numpy bit-array, nBits) for a single molecule."""
-        if fp_type == "morgan":
-            fp = _morgan_gen.GetFingerprint(mol)
-            return np.array(list(fp), dtype=np.uint8), 1024
-        fp = MACCSkeys.GenMACCSKeys(mol)
-        return np.array(list(fp), dtype=np.uint8), 167
-except ImportError:
-    def _make_fp_array(mol, fp_type: str):
-        """Return (numpy bit-array, nBits) for a single molecule."""
-        if fp_type == "morgan":
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, nBits=1024)
-            return np.array(list(fp), dtype=np.uint8), 1024
-        fp = MACCSkeys.GenMACCSKeys(mol)
-        return np.array(list(fp), dtype=np.uint8), 167
+def _make_fp_array(mol, fp_type: str):
+    """Return (numpy bit-array, nBits) for a single molecule."""
+    if fp_type == "morgan":
+        # Pass radius as positional arg — newer RDKit made it positional-only
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, 3, nBits=1024)
+        return np.array(list(fp), dtype=np.uint8), 1024
+    fp = MACCSkeys.GenMACCSKeys(mol)
+    return np.array(list(fp), dtype=np.uint8), 167
 
 
 def _calc_descriptors(mol) -> dict:
@@ -360,13 +382,13 @@ def _predict_one_receptor(rec, fp_type, algorithm, fp_arr, nBits,
         inact_pct   = round(y_pred_prob[0][1] * 100, 1)
     else:
         cols   = [f"Bit_{i}" for i in range(nBits)]
-        df_rep = pd.concat([pd.DataFrame([fp_arr], columns=cols)] * 10,
-                           ignore_index=True)
-        y_pred = model.predict(df_rep.values)
-        score  = y_pred[0][0] if hasattr(y_pred[0], "__len__") else y_pred[0]
-        activity   = "Active" if float(score) >= 0.6 else "Inactive"
-        active_pct = round(float(score) * 100, 1)
-        inact_pct  = round((1 - float(score)) * 100, 1)
+        df0    = pd.DataFrame([np.asarray(fp_arr, dtype=np.float64)], columns=cols)
+        df_rep = pd.concat([df0.copy() for _ in range(10)], ignore_index=True)
+        scores_1d = _sl_predict_scores(model, df_rep.values)
+        score  = float(scores_1d[0])
+        activity   = "Active" if score >= 0.6 else "Inactive"
+        active_pct = round(score * 100, 1)
+        inact_pct  = round((1 - score) * 100, 1)
 
     return {"Receptor": rec, "Activity": activity,
             "Active%": active_pct, "Inactive%": inact_pct, "AD": ad}
@@ -383,8 +405,10 @@ def predict_single(smiles: str, name: str, fp_type: str, algorithm: str,
     descriptors = _calc_descriptors(mol)
     fp_arr, nBits = _make_fp_array(mol, fp_type)
 
-    # Run all receptors in parallel (I/O-bound after first call due to cache)
-    n_workers = min(len(receptors), os.cpu_count() or 4)
+    # SVM: parallel (cached models are small + thread-safe). SuperLearner:
+    # one receptor at a time to avoid OOM and mlens/parallel edge cases.
+    n_workers = (1 if algorithm == "superlearner"
+                 else min(len(receptors), os.cpu_count() or 4))
     results_map = {}
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
@@ -509,19 +533,21 @@ def predict_batch(df: pd.DataFrame, fp_type: str, algorithm: str,
             active_pcts = (y_pred_prob[:, 0] * 100).round(1).tolist()
             inact_pcts  = (y_pred_prob[:, 1] * 100).round(1).tolist()
         else:
-            df_fp = pd.DataFrame(fp_matrix, columns=bit_cols)
+            df_fp = pd.DataFrame(
+                np.asarray(fp_matrix, dtype=np.float64), columns=bit_cols
+            )
             if len(passed) <= 10:
-                df_rep = pd.concat([df_fp] * 10, ignore_index=True)
-                y_pred = model.predict(df_rep.values)
-                scores = [row[0] if hasattr(row, "__len__") else row
-                          for row in y_pred[:len(passed)]]
+                df_rep = pd.concat([df_fp.copy() for _ in range(10)], ignore_index=True)
+                scores_1d = _sl_predict_scores(model, df_rep.values)
             else:
-                y_pred = model.predict(df_fp.values)
-                scores = [row[0] if hasattr(row, "__len__") else row
-                          for row in y_pred]
-            activities  = ["Active" if float(s) >= 0.6 else "Inactive" for s in scores]
-            active_pcts = [round(float(s) * 100, 1) for s in scores]
-            inact_pcts  = [round((1 - float(s)) * 100, 1) for s in scores]
+                scores_1d = _sl_predict_scores(model, df_fp.values)
+            # 10x replication stacks row blocks; first N outputs match the N compounds.
+            block = scores_1d[: len(passed)]
+            activities  = [
+                "Active" if float(s) >= 0.6 else "Inactive" for s in block
+            ]
+            active_pcts = [round(float(s) * 100, 1) for s in block]
+            inact_pcts  = [round((1 - float(s)) * 100, 1) for s in block]
 
         rows = [
             {"NAME": p["NAME"], "SMILES": p["SMILES"],

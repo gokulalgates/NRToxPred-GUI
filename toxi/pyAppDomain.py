@@ -99,26 +99,13 @@ simiMetricDict = {
 'Dice':DataStructs.BulkDiceSimilarity,
 'cosine':DataStructs.BulkCosineSimilarity}
 
-# Newer RDKit (≥2023) made `radius` a positional-only argument in the old
-# Morgan functions and deprecated them.  Use rdFingerprintGenerator when
-# available; fall back to the old API with radius passed positionally.
-try:
-    from rdkit.Chem import rdFingerprintGenerator as _rfg
+# Newer RDKit made `radius` positional-only in the old Morgan functions.
+# Pass it positionally to avoid TypeError / deprecation warnings.
+def _morgan_bitvect(mol, radius=2, nBits=2048, **_):
+    return AllChem.GetMorganFingerprintAsBitVect(mol, int(radius), nBits=int(nBits))
 
-    def _morgan_bitvect(mol, radius=2, nBits=2048, **_):
-        return _rfg.GetMorganGenerator(radius=int(radius),
-                                       fpSize=int(nBits)).GetFingerprint(mol)
-
-    def _morgan_count(mol, radius=2, **_):
-        return _rfg.GetMorganGenerator(radius=int(radius)).GetCountFingerprint(mol)
-
-except ImportError:
-    def _morgan_bitvect(mol, radius=2, nBits=2048, **_):
-        return AllChem.GetMorganFingerprintAsBitVect(mol, int(radius),
-                                                     nBits=int(nBits))
-
-    def _morgan_count(mol, radius=2, **_):
-        return AllChem.GetMorganFingerprint(mol, int(radius))
+def _morgan_count(mol, radius=2, **_):
+    return AllChem.GetMorganFingerprint(mol, int(radius))
 
 fpTypeDict = {
 'topology':FingerprintMols.FingerprintMol,
