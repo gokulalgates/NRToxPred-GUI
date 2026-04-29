@@ -991,6 +991,8 @@ class SinglePredTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
         self._photo = None
+        self._thumb_photos = []        # keep refs so GC doesn't collect them
+        self._compound_smiles = {}     # label → SMILES for click-to-view
         self._last_results = []
         self._last_met_data = []
         self._build()
@@ -1087,8 +1089,8 @@ class SinglePredTab(ttk.Frame):
         met_row.pack(anchor="w", padx=8, pady=(2, 6))
         tk.Label(met_row, text="Max metabolites:", font=FONT_SMALL,
                  bg=COLORS["surface"], fg=COLORS["subtext"]).pack(side="left")
-        self.met_max_var = tk.IntVar(value=5)
-        tk.Spinbox(met_row, from_=1, to=10, textvariable=self.met_max_var,
+        self.met_max_var = tk.IntVar(value=20)
+        tk.Spinbox(met_row, from_=1, to=50, textvariable=self.met_max_var,
                    width=4, bg=COLORS["entry_bg"], fg=COLORS["text"],
                    relief="flat", font=FONT_SMALL,
                    highlightthickness=1,
@@ -1118,15 +1120,46 @@ class SinglePredTab(ttk.Frame):
         right = ttk.Frame(self)
         right.pack(side="left", fill="both", expand=True, padx=(4, 10), pady=10)
 
-        # molecule image
+        # ── structure panel (main view + thumbnail strip) ─────────────────────
         img_f = ttk.Frame(right, style="Surface.TFrame")
         img_f.pack(fill="x", pady=(0, 6), ipady=4)
-        ttk.Label(img_f, text="Structure", style="Accent.TLabel",
-                  background=COLORS["surface"]).pack(anchor="w", padx=10, pady=(4, 0))
-        self.mol_canvas = tk.Canvas(img_f, width=310, height=220,
+
+        hdr_row = ttk.Frame(img_f, style="Surface.TFrame")
+        hdr_row.pack(fill="x", padx=10, pady=(4, 0))
+        ttk.Label(hdr_row, text="Structure", style="Accent.TLabel",
+                  background=COLORS["surface"]).pack(side="left")
+        self._struct_lbl = tk.Label(hdr_row, text="", font=FONT_SMALL,
+                                    bg=COLORS["surface"], fg=COLORS["subtext"])
+        self._struct_lbl.pack(side="left", padx=8)
+
+        self.mol_canvas = tk.Canvas(img_f, width=310, height=190,
                                     bg=COLORS["surface"], highlightthickness=0)
-        self.mol_canvas.pack(padx=10, pady=4)
+        self.mol_canvas.pack(padx=10, pady=(4, 2))
         self._draw_placeholder()
+
+        # thumbnail strip — shows parent + all metabolites; click to switch view
+        tk.Label(img_f, text="Click a structure to view  ↓",
+                 bg=COLORS["surface"], fg=COLORS["subtext"],
+                 font=("Helvetica", 8)).pack(anchor="w", padx=12)
+        thumb_outer = ttk.Frame(img_f, style="Surface.TFrame")
+        thumb_outer.pack(fill="x", padx=10, pady=(0, 4))
+        self._thumb_canvas = tk.Canvas(thumb_outer, height=88,
+                                       bg=COLORS["surface2"], highlightthickness=0)
+        self._thumb_hsb = ttk.Scrollbar(thumb_outer, orient="horizontal",
+                                         command=self._thumb_canvas.xview)
+        self._thumb_canvas.configure(xscrollcommand=self._thumb_hsb.set)
+        self._thumb_canvas.pack(fill="x")
+        self._thumb_hsb.pack(fill="x")
+        self._thumb_inner = tk.Frame(self._thumb_canvas, bg=COLORS["surface2"])
+        self._thumb_canvas.create_window((0, 0), window=self._thumb_inner, anchor="nw")
+        self._thumb_inner.bind(
+            "<Configure>",
+            lambda e: self._thumb_canvas.configure(
+                scrollregion=self._thumb_canvas.bbox("all")))
+        # placeholder text in strip
+        tk.Label(self._thumb_inner, text="Structures appear here after prediction",
+                 bg=COLORS["surface2"], fg=COLORS["subtext"],
+                 font=("Helvetica", 8)).pack(padx=10, pady=30)
 
         # descriptors
         prop_f = ttk.Frame(right, style="Surface.TFrame")
@@ -1172,6 +1205,7 @@ class SinglePredTab(ttk.Frame):
         self.res_tree.tag_configure("met_sep",    foreground=COLORS["subtext"],
                                     background=COLORS["surface2"])
         self.res_tree.tag_configure("metabolite", foreground=COLORS["text"])
+        self.res_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
         ttk.Button(right, text="Export Results to CSV",
                    command=self._export_csv,
@@ -1180,9 +1214,69 @@ class SinglePredTab(ttk.Frame):
     # ── helpers ──────────────────────────────────────────────────────────────
     def _draw_placeholder(self):
         self.mol_canvas.delete("all")
-        self.mol_canvas.create_text(155, 110,
+        self.mol_canvas.create_text(155, 95,
                                     text="Structure will appear here",
                                     fill=COLORS["subtext"], font=FONT_SMALL)
+
+    def _show_structure(self, smiles: str, label: str = ""):
+        """Update the main canvas to show the molecule for the given SMILES."""
+        pil = mol_to_pil(smiles, size=(310, 190))
+        photo = pil_to_photo(pil)
+        self.mol_canvas.delete("all")
+        if photo:
+            self._photo = photo
+            self.mol_canvas.create_image(155, 95, image=self._photo)
+        else:
+            self.mol_canvas.create_text(155, 95, text="Could not render structure",
+                                        fill=COLORS["inactive"], font=FONT_SMALL)
+        self._struct_lbl.config(text=label)
+
+    def _on_tree_select(self, event):
+        """Switch the main canvas when the user clicks a result row."""
+        sel = self.res_tree.selection()
+        if not sel:
+            return
+        label = self.res_tree.item(sel[0], "values")[0]
+        smiles = self._compound_smiles.get(label)
+        if smiles:
+            self._show_structure(smiles, label)
+
+    def _update_thumbnails(self, compound_list):
+        """
+        Populate the thumbnail strip.
+        compound_list: [(label, smiles, PhotoImage_or_None), ...]
+        Must be called on the main thread.
+        """
+        for w in self._thumb_inner.winfo_children():
+            w.destroy()
+
+        for label, smiles, photo in compound_list:
+            cell = tk.Frame(self._thumb_inner, bg=COLORS["surface2"],
+                            cursor="hand2", bd=1, relief="solid",
+                            highlightbackground=COLORS["border"])
+            cell.pack(side="left", padx=3, pady=4)
+
+            if photo:
+                img_lbl = tk.Label(cell, image=photo, bg=COLORS["surface2"],
+                                   cursor="hand2")
+                img_lbl.pack()
+            else:
+                img_lbl = tk.Label(cell, text="?", width=12, height=4,
+                                   bg=COLORS["surface"], fg=COLORS["subtext"],
+                                   font=FONT_SMALL, cursor="hand2")
+                img_lbl.pack()
+
+            tk.Label(cell, text=label, bg=COLORS["surface2"], fg=COLORS["text"],
+                     font=("Helvetica", 7), wraplength=90,
+                     cursor="hand2").pack(padx=2, pady=(0, 2))
+
+            for widget in cell.winfo_children() + [cell]:
+                widget.bind("<Button-1>",
+                            lambda e, s=smiles, l=label: self._show_structure(s, l))
+
+        self._thumb_canvas.update_idletasks()
+        self._thumb_canvas.configure(
+            scrollregion=self._thumb_canvas.bbox("all"))
 
     def _select_all(self):
         for v in self.rec_vars.values():
@@ -1236,9 +1330,12 @@ class SinglePredTab(ttk.Frame):
         try:
             desc, results = predict_single(smiles, name, fp, algo, recs,
                                            Nsimilar, Scutoff)
-            pil_img = mol_to_pil(smiles)
+            # Generate PIL images in background (thread-safe); PhotoImage
+            # conversion happens on the main thread inside _show_results
+            pil_img       = mol_to_pil(smiles, size=(310, 190))
+            parent_thumb  = mol_to_pil(smiles, size=(90, 65))
 
-            met_data = []  # list of (label, smiles, prob, results_list)
+            met_data = []  # (label, smiles, prob, results_list, thumb_pil)
             if include_mets:
                 _ui_queue.put(lambda: self.status_lbl.config(
                     text="Generating metabolites…"))
@@ -1250,39 +1347,62 @@ class SinglePredTab(ttk.Frame):
                     try:
                         _, met_results = predict_single(
                             met_smi, f"Met.{i}", fp, algo, recs, Nsimilar, Scutoff)
+                        met_thumb = mol_to_pil(met_smi, size=(90, 65))
                         met_data.append((f"Met.{i} ({prob:.0%})", met_smi,
-                                         prob, met_results))
+                                         prob, met_results, met_thumb))
                     except Exception:
                         pass
 
-            _ui_queue.put(lambda d=desc, r=results, img=pil_img, m=met_data:
-                          self._show_results(d, r, pil_to_photo(img), m))
+            _ui_queue.put(lambda s=smiles, d=desc, r=results, img=pil_img,
+                                 pt=parent_thumb, m=met_data:
+                          self._show_results(s, d, r,
+                                             pil_to_photo(img),
+                                             pil_to_photo(pt), m))
         except Exception as e:
             msg = str(e)
             _ui_queue.put(lambda m=msg: self._show_error(m))
 
-    def _show_results(self, desc, results, photo, met_data=None):
-        # molecule image
+    def _show_results(self, smiles, desc, results, photo, parent_thumb, met_data=None):
+        # ── main structure canvas (parent by default) ─────────────────────────
         self.mol_canvas.delete("all")
         if photo:
             self._photo = photo
-            self.mol_canvas.create_image(155, 110, image=self._photo)
+            self.mol_canvas.create_image(155, 95, image=self._photo)
         else:
-            self.mol_canvas.create_text(155, 110,
+            self.mol_canvas.create_text(155, 95,
                                         text="Could not render structure",
                                         fill=COLORS["inactive"], font=FONT_SMALL)
+        self._struct_lbl.config(text="Parent")
 
-        # properties
+        # ── thumbnail strip ───────────────────────────────────────────────────
+        self._thumb_photos.clear()
+        self._compound_smiles = {"Parent": smiles}
+        compound_list = [("Parent", smiles, parent_thumb)]
+
+        for label, met_smi, prob, met_results, thumb_pil in (met_data or []):
+            self._compound_smiles[label] = met_smi
+            compound_list.append((label, met_smi, thumb_pil))
+
+        # Convert PILs → PhotoImages on main thread, store refs
+        photo_compound_list = []
+        for label, smi, pil in compound_list:
+            photo = pil_to_photo(pil)
+            if photo:
+                self._thumb_photos.append(photo)
+            photo_compound_list.append((label, smi, photo))
+
+        self._update_thumbnails(photo_compound_list)
+
+        # ── properties table ──────────────────────────────────────────────────
         for row in self.prop_tree.get_children():
             self.prop_tree.delete(row)
         for k, v in desc.items():
             self.prop_tree.insert("", "end", values=(k, v))
 
-        # results + metabolites
+        # ── results table: parent rows then metabolite rows ───────────────────
         for row in self.res_tree.get_children():
             self.res_tree.delete(row)
 
-        # parent rows
         for r in results:
             tags = _row_tags(r["Activity"], r["AD"])
             self.res_tree.insert("", "end",
@@ -1290,10 +1410,8 @@ class SinglePredTab(ttk.Frame):
                                          r["Active%"], r["Inactive%"], r["AD"]),
                                  tags=tags)
 
-        # metabolite rows
         if met_data:
-            for label, met_smi, prob, met_results in met_data:
-                # separator row
+            for label, met_smi, prob, met_results, _ in met_data:
                 self.res_tree.insert("", "end",
                                      values=(f"── {label} ──", "", "", "", "", ""),
                                      tags=("met_sep",))
@@ -1330,7 +1448,7 @@ class SinglePredTab(ttk.Frame):
         if not path:
             return
         rows = [{"Source": "Parent", **r} for r in self._last_results]
-        for label, met_smi, prob, met_results in self._last_met_data:
+        for label, met_smi, prob, met_results, _ in self._last_met_data:
             for r in met_results:
                 rows.append({"Source": label, "SMILES": met_smi,
                              "Probability": round(prob, 4), **r})
