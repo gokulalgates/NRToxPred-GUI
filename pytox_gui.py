@@ -195,14 +195,17 @@ except Exception:
     _log("molvs not available — using rdkit-only standardization")
 
 # SyGMa is optional — enables Phase I metabolite prediction
+# v1.1.0 uses lowercase 'sygma' package name and a different API
+_HAS_SYGMA = False
+_SYGMA_RULES_DIR = None
 try:
-    from syGMa.molecule import Molecule as _SyGMaMolecule
-    from syGMa.scenario import Scenario as _SyGMaScenario
+    import sygma as _sygma_pkg
+    from sygma.scenario import Scenario as _SyGMaScenario
+    _SYGMA_RULES_DIR = os.path.join(os.path.dirname(_sygma_pkg.__file__), "rules")
     _HAS_SYGMA = True
-    _log("syGMa OK")
+    _log("sygma OK")
 except Exception:
-    _HAS_SYGMA = False
-    _log("syGMa not available — metabolite prediction disabled")
+    _log("sygma not available — metabolite prediction disabled")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core prediction helpers  (no Django / Celery dependency)
@@ -635,24 +638,37 @@ def pil_to_photo(pil_img) -> "ImageTk.PhotoImage | None":
 
 
 def generate_metabolites(smiles: str, n_steps: int = 1,
-                         max_mets: int = 5) -> list:
+                         max_mets: int = 20) -> list:
     """
-    Predict Phase I metabolites using SyGMa reaction rules.
-    Returns list of (smiles, probability) sorted by probability descending.
-    Returns [] if SyGMa is not installed.
+    Predict Phase I metabolites using SyGMa (v1.1.0+) reaction rules.
+    Returns list of (smiles, probability, pathway) sorted by score descending.
+    Returns [] if sygma is not installed.
     """
     if not _HAS_SYGMA:
         return []
     try:
-        parent = _SyGMaMolecule(smiles)
-        scenario = _SyGMaScenario([("phase1", n_steps)])
-        metabolites = scenario.run(parent)
-        seen = {smiles}
+        from rdkit import Chem as _Chem
+        mol = _Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return []
+        rules_path = os.path.join(_SYGMA_RULES_DIR, "phase1.txt")
+        scenario = _SyGMaScenario([[rules_path, n_steps]])
+        tree = scenario.run(mol)
+        tree.calc_scores()
+        rows = tree.to_list()
+        parent_smi = _Chem.MolToSmiles(mol)
+        seen = {parent_smi}
         results = []
-        for m in metabolites:
-            if m.smiles and m.smiles not in seen:
-                seen.add(m.smiles)
-                results.append((m.smiles, m.probability))
+        for row in rows:
+            met_mol = row.get("SyGMa_metabolite")
+            score   = row.get("SyGMa_score", 0)
+            pathway = row.get("SyGMa_pathway", "").strip().rstrip(";").strip()
+            if met_mol is None or score >= 1.0:  # skip parent (score == 1)
+                continue
+            met_smi = _Chem.MolToSmiles(met_mol)
+            if met_smi and met_smi not in seen:
+                seen.add(met_smi)
+                results.append((met_smi, float(score), pathway))
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:max_mets]
     except Exception:
@@ -1341,15 +1357,16 @@ class SinglePredTab(ttk.Frame):
                     text="Generating metabolites…"))
                 mets = generate_metabolites(smiles, n_steps=met_steps,
                                             max_mets=met_max)
-                for i, (met_smi, prob) in enumerate(mets, start=1):
+                for i, (met_smi, prob, pathway) in enumerate(mets, start=1):
                     _ui_queue.put(lambda i=i, n=len(mets): self.status_lbl.config(
                         text=f"Predicting metabolite {i}/{n}…"))
                     try:
                         _, met_results = predict_single(
                             met_smi, f"Met.{i}", fp, algo, recs, Nsimilar, Scutoff)
                         met_thumb = mol_to_pil(met_smi, size=(90, 65))
-                        met_data.append((f"Met.{i} ({prob:.0%})", met_smi,
-                                         prob, met_results, met_thumb))
+                        label = f"Met.{i} ({prob:.0%})"
+                        met_data.append((label, met_smi, prob,
+                                         pathway, met_results, met_thumb))
                     except Exception:
                         pass
 
@@ -1379,7 +1396,7 @@ class SinglePredTab(ttk.Frame):
         self._compound_smiles = {"Parent": smiles}
         compound_list = [("Parent", smiles, parent_thumb)]
 
-        for label, met_smi, prob, met_results, thumb_pil in (met_data or []):
+        for label, met_smi, prob, pathway, met_results, thumb_pil in (met_data or []):
             self._compound_smiles[label] = met_smi
             compound_list.append((label, met_smi, thumb_pil))
 
@@ -1411,9 +1428,10 @@ class SinglePredTab(ttk.Frame):
                                  tags=tags)
 
         if met_data:
-            for label, met_smi, prob, met_results, _ in met_data:
+            for label, met_smi, prob, pathway, met_results, _ in met_data:
+                sep_text = f"── {label}" + (f"  [{pathway}]" if pathway else "") + " ──"
                 self.res_tree.insert("", "end",
-                                     values=(f"── {label} ──", "", "", "", "", ""),
+                                     values=(sep_text, "", "", "", "", ""),
                                      tags=("met_sep",))
                 for r in met_results:
                     tags = _row_tags(r["Activity"], r["AD"]) + ("metabolite",)
@@ -1448,10 +1466,11 @@ class SinglePredTab(ttk.Frame):
         if not path:
             return
         rows = [{"Source": "Parent", **r} for r in self._last_results]
-        for label, met_smi, prob, met_results, _ in self._last_met_data:
+        for label, met_smi, prob, pathway, met_results, _ in self._last_met_data:
             for r in met_results:
                 rows.append({"Source": label, "SMILES": met_smi,
-                             "Probability": round(prob, 4), **r})
+                             "Probability": round(prob, 4),
+                             "Pathway": pathway, **r})
         pd.DataFrame(rows).to_csv(path, index=False)
         messagebox.showinfo("Saved", f"Results saved to:\n{path}")
 
