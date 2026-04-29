@@ -1587,9 +1587,45 @@ class BatchPredTab(ttk.Frame):
         self.ad_params = ADParamFrame(ad_f, bg=COLORS["surface"])
         self.ad_params.pack(anchor="w")
 
+        # ── Metabolite prediction controls ────────────────────────────────────
+        met_f = ttk.Frame(ctrl, style="Surface.TFrame")
+        met_f.grid(row=5, column=0, columnspan=6, sticky="w", padx=8, pady=(2, 4))
+        self.met_var = tk.BooleanVar(value=False)
+        met_cb = tk.Checkbutton(met_f, text="Predict Phase I metabolites",
+                                variable=self.met_var,
+                                bg=COLORS["surface"], fg=COLORS["text"],
+                                selectcolor=COLORS["entry_bg"],
+                                activebackground=COLORS["surface"],
+                                activeforeground=COLORS["accent"],
+                                font=FONT_SMALL)
+        if not _HAS_SYGMA:
+            met_cb.config(state="disabled")
+            tk.Label(met_f, text="(install syGMa to enable)",
+                     bg=COLORS["surface"], fg=COLORS["unreliable"],
+                     font=("Helvetica", 8)).pack(side="left", padx=(4, 0))
+        met_cb.pack(side="left")
+        tk.Label(met_f, text="  Max:", font=FONT_SMALL,
+                 bg=COLORS["surface"], fg=COLORS["subtext"]).pack(side="left")
+        self.met_max_var = tk.IntVar(value=10)
+        tk.Spinbox(met_f, from_=1, to=50, textvariable=self.met_max_var,
+                   width=4, bg=COLORS["entry_bg"], fg=COLORS["text"],
+                   relief="flat", font=FONT_SMALL,
+                   highlightthickness=1,
+                   highlightbackground=COLORS["border"],
+                   highlightcolor=COLORS["accent"]).pack(side="left", padx=4)
+        tk.Label(met_f, text="Steps:", font=FONT_SMALL,
+                 bg=COLORS["surface"], fg=COLORS["subtext"]).pack(side="left")
+        self.met_steps_var = tk.IntVar(value=1)
+        tk.Spinbox(met_f, from_=1, to=3, textvariable=self.met_steps_var,
+                   width=4, bg=COLORS["entry_bg"], fg=COLORS["text"],
+                   relief="flat", font=FONT_SMALL,
+                   highlightthickness=1,
+                   highlightbackground=COLORS["border"],
+                   highlightcolor=COLORS["accent"]).pack(side="left", padx=4)
+
         # Run / progress
         run_row = ttk.Frame(ctrl, style="Surface.TFrame")
-        run_row.grid(row=5, column=0, columnspan=6, sticky="ew", padx=8, pady=8)
+        run_row.grid(row=6, column=0, columnspan=6, sticky="ew", padx=8, pady=8)
         self.run_btn = ttk.Button(run_row, text="Run Batch Prediction",
                                   command=self._run_batch)
         self.run_btn.pack(side="left")
@@ -1618,10 +1654,10 @@ class BatchPredTab(ttk.Frame):
                 ("Inactive",   COLORS["inactive"]),
             ], bg=COLORS["bg"])
 
-            cols = ("NAME", "SMILES", "Active %", "Inactive %", "Activity", "AD")
+            cols = ("NAME", "SMILES", "Pathway", "Active %", "Inactive %", "Activity", "AD")
             tf, tree = _scrolled_tree(f, cols, heights=13)
             tf.pack(fill="both", expand=True, padx=6, pady=4)
-            for col, w in zip(cols, [120, 280, 80, 85, 90, 90]):
+            for col, w in zip(cols, [120, 200, 150, 80, 85, 90, 90]):
                 tree.heading(col, text=col)
                 tree.column(col, width=w)
             tree.tag_configure("active",     foreground=COLORS["active"])
@@ -1667,10 +1703,13 @@ class BatchPredTab(ttk.Frame):
 
         Nsimilar = self.ad_params.Nsimilar
         Scutoff  = self.ad_params.Scutoff
+        include_mets = self.met_var.get() and _HAS_SYGMA
+        met_steps    = self.met_steps_var.get()
+        met_max      = self.met_max_var.get()
 
         self.run_btn.config(state="disabled")
         self.prog["value"]   = 0
-        self.prog["maximum"] = len(recs)
+        self.prog["maximum"] = len(recs) + 1
         self._results_by_rec = {}
         for tree in self._rec_trees.values():
             for row in tree.get_children():
@@ -1682,12 +1721,66 @@ class BatchPredTab(ttk.Frame):
         threading.Thread(
             target=self._thread_batch,
             args=(df, self.fp_var.get(), self.algo_var.get(),
-                  recs, Nsimilar, Scutoff, progress),
+                  recs, Nsimilar, Scutoff, progress,
+                  include_mets, met_steps, met_max),
             daemon=True).start()
 
-    def _thread_batch(self, df, fp, algo, recs, Nsimilar, Scutoff, progress_cb):
+    def _thread_batch(self, df, fp, algo, recs, Nsimilar, Scutoff, progress_cb,
+                      include_mets=False, met_steps=1, met_max=10):
         try:
             results = predict_batch(df, fp, algo, recs, Nsimilar, Scutoff, progress_cb)
+
+            # ── add Pathway column (blank for parent rows when no mets) ────────
+            parent_pathway = "Parent" if include_mets else ""
+            for rec in results:
+                results[rec].insert(2, "Pathway", parent_pathway)
+
+            # ── Phase I metabolite generation ──────────────────────────────────
+            if include_mets and _HAS_SYGMA and recs:
+                first_df = results[recs[0]]
+                valid_parents = first_df[
+                    ~first_df["Activity"].astype(str).str.startswith("ERROR")
+                ][["NAME", "SMILES"]].to_dict("records")
+                n_total = len(valid_parents)
+
+                met_rows = {rec: [] for rec in recs}
+
+                for i, parent in enumerate(valid_parents, start=1):
+                    pname = parent["NAME"]
+                    psmi  = parent["SMILES"]
+                    _ui_queue.put(lambda i=i, n=n_total, nm=pname:
+                        self.prog_lbl.config(
+                            text=f"Metabolites: {nm}  ({i}/{n})"))
+
+                    mets = generate_metabolites(psmi, n_steps=met_steps,
+                                               max_mets=met_max)
+                    for j, (met_smi, prob, pathway) in enumerate(mets, start=1):
+                        met_name = f"{pname} → Met.{j} ({prob:.0%})"
+                        try:
+                            _, met_res_list = predict_single(
+                                met_smi, met_name, fp, algo,
+                                recs, Nsimilar, Scutoff)
+                            for res in met_res_list:
+                                rec = res["Receptor"]
+                                if rec in met_rows:
+                                    met_rows[rec].append({
+                                        "NAME":      met_name,
+                                        "SMILES":    met_smi,
+                                        "Pathway":   pathway,
+                                        "Active%":   res["Active%"],
+                                        "Inactive%": res["Inactive%"],
+                                        "Activity":  res["Activity"],
+                                        "AD":        res["AD"],
+                                    })
+                        except Exception:
+                            pass
+
+                for rec in recs:
+                    if met_rows[rec]:
+                        results[rec] = pd.concat(
+                            [results[rec], pd.DataFrame(met_rows[rec])],
+                            ignore_index=True)
+
             _ui_queue.put(lambda r=results: self._show_batch_results(r))
         except Exception as e:
             msg = str(e)
@@ -1705,16 +1798,24 @@ class BatchPredTab(ttk.Frame):
                 continue
             for row in tree.get_children():
                 tree.delete(row)
+            has_pathway = "Pathway" in df.columns
             for _, r in df.iterrows():
                 tags = _row_tags(r["Activity"], r["AD"])
+                pathway = r["Pathway"] if has_pathway else ""
                 tree.insert("", "end",
-                            values=(r["NAME"], r["SMILES"],
+                            values=(r["NAME"], r["SMILES"], pathway,
                                     r["Active%"], r["Inactive%"],
                                     r["Activity"], r["AD"]),
                             tags=tags)
         self.run_btn.config(state="normal")
         self.prog["value"] = self.prog["maximum"]
-        self.prog_lbl.config(text="Done")
+        n_met = sum(
+            (df["Pathway"] != "Parent").sum()
+            for df in results.values()
+            if "Pathway" in df.columns
+        ) // max(len(results), 1)
+        self.prog_lbl.config(
+            text="Done" + (f"  │  +{n_met} metabolite rows" if n_met else ""))
 
     def _batch_error(self, msg):
         self.run_btn.config(state="normal")

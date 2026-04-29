@@ -52,13 +52,46 @@ Each prediction includes an **Applicability Domain (AD)** assessment — **Relia
 - **GUI and CLI** — interactive desktop app or scriptable command-line interface
 - **Single compound prediction** — enter a SMILES string and get instant results
 - **Batch prediction** — upload a CSV/Excel file with a column of SMILES strings
+- **Phase I metabolite prediction** — generate metabolites via SyGMa and predict their NR activity (single and batch)
 - **Two fingerprint types** — Morgan (ECFP6, 1024 bits) and MACCS Keys (167 bits)
 - **Two algorithms** — SVM (fast, ~250 MB) and SuperLearner (ensemble, ~12 GB)
 - **Applicability Domain** — Tanimoto-based AD with adjustable similarity cutoff and neighbor count
-- **2D structure viewer** — renders the molecule structure in the single prediction tab
+- **2D structure viewer** — renders the molecule and metabolite structures as clickable thumbnails
 - **Molecular descriptors** — MW, LogP, HBD, HBA, TPSA, RotBonds displayed per compound
-- **Export results** — save batch predictions to Excel or CSV
+- **Per-compound results** — clicking a metabolite thumbnail switches the results table to that metabolite
+- **Export results** — save batch predictions (including metabolite rows) to Excel or CSV
 - **Auto-download** — fetches models from Hugging Face Hub on first run
+
+---
+
+## Metabolite Prediction
+
+NR-ToxPred can predict Phase I metabolites using [SyGMa](https://github.com/3D-e-Chem/sygma) reaction rules and then assess their nuclear receptor activity — helping you understand whether a parent compound's metabolites may be more or less toxic than the parent.
+
+### Single compound tab
+
+1. Check **Predict Phase I metabolites** in the left panel
+2. Adjust **Max metabolites** (default 20) and **Steps** (1 = direct metabolites, 2–3 = deeper metabolism)
+3. Click **Predict**
+
+After prediction, a scrollable thumbnail strip appears below the structure canvas showing the parent and each metabolite. Clicking a thumbnail:
+- Displays the metabolite's 2D structure
+- Updates the molecular properties panel
+- Switches the results table to show that metabolite's NR activity predictions
+
+### Batch prediction tab
+
+1. Load your CSV file (requires `SMILES` and `NAME` columns)
+2. Check **Predict Phase I metabolites**
+3. Click **Run Batch Prediction**
+
+Metabolite rows are appended after each parent compound's row in the results table, labelled `CompoundName → Met.1 (score%)`. A **Pathway** column shows the biotransformation reaction (e.g., *CYP aliphatic hydroxylation*). All metabolite rows are included in exported Excel/CSV files.
+
+### Notes
+
+- Metabolite prediction requires SyGMa to be installed (`pip install syGMa`). If it is absent the controls are automatically disabled.
+- Fully fluorinated compounds (PFOS, PFOA, and other perfluoroalkyl substances) have no predicted metabolites — this is scientifically correct; their C–F bonds are not substrates for CYP450 enzymes.
+- For large batches, metabolite generation adds significant run time (roughly seconds per compound per metabolite). Reduce **Max** or use **Steps = 1** for speed.
 
 ---
 
@@ -107,9 +140,11 @@ conda install -c conda-forge rdkit
 pip install -r requirements.txt
 ```
 
-`requirements.txt` includes: `molvs`, `scikit-learn==0.23.2`, `mlens`, `pandas`, `numpy`, `scipy`, `openpyxl`, `Pillow`, `huggingface_hub`
+`requirements.txt` includes: `molvs`, `scikit-learn==0.23.2`, `mlens`, `pandas`, `numpy`, `scipy`, `openpyxl`, `Pillow`, `huggingface_hub`, `syGMa`
 
 > **Note:** scikit-learn is pinned to 0.23.2 and mlens is required for SuperLearner models. Both are installed automatically by `requirements.txt`.
+
+> **Metabolite prediction** requires [SyGMa](https://github.com/3D-e-Chem/sygma) (`pip install syGMa`). It is included in `requirements.txt` and `environment_setup.yml`. If SyGMa is not installed the app still works — metabolite controls are greyed out.
 
 ---
 
