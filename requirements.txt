@@ -12,3 +12,4 @@ scipy
 openpyxl
 Pillow
 huggingface_hub
+syGMa

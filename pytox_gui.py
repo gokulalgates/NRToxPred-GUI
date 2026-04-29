@@ -194,6 +194,16 @@ except Exception:
     _standardize_smiles_fn = None
     _log("molvs not available — using rdkit-only standardization")
 
+# SyGMa is optional — enables Phase I metabolite prediction
+try:
+    from syGMa.molecule import Molecule as _SyGMaMolecule
+    from syGMa.scenario import Scenario as _SyGMaScenario
+    _HAS_SYGMA = True
+    _log("syGMa OK")
+except Exception:
+    _HAS_SYGMA = False
+    _log("syGMa not available — metabolite prediction disabled")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Core prediction helpers  (no Django / Celery dependency)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -623,6 +633,32 @@ def pil_to_photo(pil_img) -> "ImageTk.PhotoImage | None":
     except Exception:
         return None
 
+
+def generate_metabolites(smiles: str, n_steps: int = 1,
+                         max_mets: int = 5) -> list:
+    """
+    Predict Phase I metabolites using SyGMa reaction rules.
+    Returns list of (smiles, probability) sorted by probability descending.
+    Returns [] if SyGMa is not installed.
+    """
+    if not _HAS_SYGMA:
+        return []
+    try:
+        parent = _SyGMaMolecule(smiles)
+        scenario = _SyGMaScenario([("phase1", n_steps)])
+        metabolites = scenario.run(parent)
+        seen = {smiles}
+        results = []
+        for m in metabolites:
+            if m.smiles and m.smiles not in seen:
+                seen.add(m.smiles)
+                results.append((m.smiles, m.probability))
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:max_mets]
+    except Exception:
+        return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GUI theme
 # ─────────────────────────────────────────────────────────────────────────────
@@ -956,6 +992,7 @@ class SinglePredTab(ttk.Frame):
         super().__init__(parent)
         self._photo = None
         self._last_results = []
+        self._last_met_data = []
         self._build()
 
     def _build(self):
@@ -1027,6 +1064,48 @@ class SinglePredTab(ttk.Frame):
 
         ttk.Separator(left, orient="horizontal").pack(fill="x", padx=8, pady=4)
 
+        # ── Metabolite prediction ─────────────────────────────────────────────
+        tk.Label(left, text="Metabolite Prediction", font=FONT_HEAD,
+                 bg=COLORS["surface"], fg=COLORS["accent2"]).pack(
+            anchor="w", padx=8, pady=(4, 2))
+        self.met_var = tk.BooleanVar(value=False)
+        met_cb = tk.Checkbutton(left, text="Predict Phase I metabolites",
+                                variable=self.met_var,
+                                bg=COLORS["surface"], fg=COLORS["text"],
+                                selectcolor=COLORS["entry_bg"],
+                                activebackground=COLORS["surface"],
+                                activeforeground=COLORS["accent"],
+                                font=FONT_SMALL)
+        if not _HAS_SYGMA:
+            met_cb.config(state="disabled")
+            tk.Label(left, text="(install syGMa to enable)",
+                     bg=COLORS["surface"], fg=COLORS["unreliable"],
+                     font=("Helvetica", 8)).pack(anchor="w", padx=24)
+        met_cb.pack(anchor="w", padx=8)
+
+        met_row = ttk.Frame(left, style="Surface.TFrame")
+        met_row.pack(anchor="w", padx=8, pady=(2, 6))
+        tk.Label(met_row, text="Max metabolites:", font=FONT_SMALL,
+                 bg=COLORS["surface"], fg=COLORS["subtext"]).pack(side="left")
+        self.met_max_var = tk.IntVar(value=5)
+        tk.Spinbox(met_row, from_=1, to=10, textvariable=self.met_max_var,
+                   width=4, bg=COLORS["entry_bg"], fg=COLORS["text"],
+                   relief="flat", font=FONT_SMALL,
+                   highlightthickness=1,
+                   highlightbackground=COLORS["border"],
+                   highlightcolor=COLORS["accent"]).pack(side="left", padx=4)
+        tk.Label(met_row, text="Steps:", font=FONT_SMALL,
+                 bg=COLORS["surface"], fg=COLORS["subtext"]).pack(side="left", padx=(8, 0))
+        self.met_steps_var = tk.IntVar(value=1)
+        tk.Spinbox(met_row, from_=1, to=3, textvariable=self.met_steps_var,
+                   width=4, bg=COLORS["entry_bg"], fg=COLORS["text"],
+                   relief="flat", font=FONT_SMALL,
+                   highlightthickness=1,
+                   highlightbackground=COLORS["border"],
+                   highlightcolor=COLORS["accent"]).pack(side="left", padx=4)
+
+        ttk.Separator(left, orient="horizontal").pack(fill="x", padx=8, pady=4)
+
         self.predict_btn = ttk.Button(left, text="Predict",
                                       command=self._run_prediction)
         self.predict_btn.pack(fill="x", padx=8, pady=6)
@@ -1076,12 +1155,12 @@ class SinglePredTab(ttk.Frame):
             ("Inactive",   COLORS["inactive"]),
         ], bg=COLORS["surface"])
 
-        cols = ("Receptor", "Activity", "Active %", "Inactive %", "AD")
+        cols = ("Source", "Receptor", "Activity", "Active %", "Inactive %", "AD")
         rf, self.res_tree = _scrolled_tree(res_f, cols, heights=10)
         rf.pack(fill="both", expand=True, padx=10, pady=4)
-        for col, w, anc in (("Receptor", 80, "center"), ("Activity", 90, "center"),
-                             ("Active %", 80, "center"), ("Inactive %", 90, "center"),
-                             ("AD", 90, "center")):
+        for col, w, anc in (("Source", 110, "w"), ("Receptor", 80, "center"),
+                             ("Activity", 90, "center"), ("Active %", 80, "center"),
+                             ("Inactive %", 90, "center"), ("AD", 90, "center")):
             self.res_tree.heading(col, text=col)
             self.res_tree.column(col, width=w, anchor=anc)
 
@@ -1090,6 +1169,9 @@ class SinglePredTab(ttk.Frame):
         self.res_tree.tag_configure("reliable",   foreground=COLORS["reliable"])
         self.res_tree.tag_configure("unreliable", foreground=COLORS["unreliable"])
         self.res_tree.tag_configure("na",         foreground=COLORS["subtext"])
+        self.res_tree.tag_configure("met_sep",    foreground=COLORS["subtext"],
+                                    background=COLORS["surface2"])
+        self.res_tree.tag_configure("metabolite", foreground=COLORS["text"])
 
         ttk.Button(right, text="Export Results to CSV",
                    command=self._export_csv,
@@ -1137,27 +1219,49 @@ class SinglePredTab(ttk.Frame):
                    if algo == "superlearner" else
                    "Restart the app and download the models when prompted."))
             return
-        Nsimilar = self.ad_params.Nsimilar
-        Scutoff  = self.ad_params.Scutoff
+        Nsimilar    = self.ad_params.Nsimilar
+        Scutoff     = self.ad_params.Scutoff
+        include_mets = self.met_var.get() and _HAS_SYGMA
+        met_steps   = self.met_steps_var.get()
+        met_max     = self.met_max_var.get()
         self.predict_btn.config(state="disabled")
         self.status_lbl.config(text="Running prediction…")
         threading.Thread(target=self._thread_predict,
-                         args=(smiles, name, fp, algo, recs, Nsimilar, Scutoff),
+                         args=(smiles, name, fp, algo, recs, Nsimilar, Scutoff,
+                               include_mets, met_steps, met_max),
                          daemon=True).start()
 
-    def _thread_predict(self, smiles, name, fp, algo, recs, Nsimilar, Scutoff):
+    def _thread_predict(self, smiles, name, fp, algo, recs, Nsimilar, Scutoff,
+                        include_mets, met_steps, met_max):
         try:
             desc, results = predict_single(smiles, name, fp, algo, recs,
                                            Nsimilar, Scutoff)
             pil_img = mol_to_pil(smiles)
-            # ImageTk.PhotoImage must be created on the main thread
-            _ui_queue.put(lambda d=desc, r=results, img=pil_img:
-                          self._show_results(d, r, pil_to_photo(img)))
+
+            met_data = []  # list of (label, smiles, prob, results_list)
+            if include_mets:
+                _ui_queue.put(lambda: self.status_lbl.config(
+                    text="Generating metabolites…"))
+                mets = generate_metabolites(smiles, n_steps=met_steps,
+                                            max_mets=met_max)
+                for i, (met_smi, prob) in enumerate(mets, start=1):
+                    _ui_queue.put(lambda i=i, n=len(mets): self.status_lbl.config(
+                        text=f"Predicting metabolite {i}/{n}…"))
+                    try:
+                        _, met_results = predict_single(
+                            met_smi, f"Met.{i}", fp, algo, recs, Nsimilar, Scutoff)
+                        met_data.append((f"Met.{i} ({prob:.0%})", met_smi,
+                                         prob, met_results))
+                    except Exception:
+                        pass
+
+            _ui_queue.put(lambda d=desc, r=results, img=pil_img, m=met_data:
+                          self._show_results(d, r, pil_to_photo(img), m))
         except Exception as e:
             msg = str(e)
             _ui_queue.put(lambda m=msg: self._show_error(m))
 
-    def _show_results(self, desc, results, photo):
+    def _show_results(self, desc, results, photo, met_data=None):
         # molecule image
         self.mol_canvas.delete("all")
         if photo:
@@ -1174,23 +1278,41 @@ class SinglePredTab(ttk.Frame):
         for k, v in desc.items():
             self.prop_tree.insert("", "end", values=(k, v))
 
-        # results + AD
+        # results + metabolites
         for row in self.res_tree.get_children():
             self.res_tree.delete(row)
+
+        # parent rows
         for r in results:
             tags = _row_tags(r["Activity"], r["AD"])
             self.res_tree.insert("", "end",
-                                 values=(r["Receptor"], r["Activity"],
+                                 values=("Parent", r["Receptor"], r["Activity"],
                                          r["Active%"], r["Inactive%"], r["AD"]),
                                  tags=tags)
 
+        # metabolite rows
+        if met_data:
+            for label, met_smi, prob, met_results in met_data:
+                # separator row
+                self.res_tree.insert("", "end",
+                                     values=(f"── {label} ──", "", "", "", "", ""),
+                                     tags=("met_sep",))
+                for r in met_results:
+                    tags = _row_tags(r["Activity"], r["AD"]) + ("metabolite",)
+                    self.res_tree.insert("", "end",
+                                         values=(label, r["Receptor"], r["Activity"],
+                                                 r["Active%"], r["Inactive%"], r["AD"]),
+                                         tags=tags)
+
         self._last_results = results
+        self._last_met_data = met_data or []
         self.predict_btn.config(state="normal")
-        n_active    = sum(1 for r in results if r["Activity"] == "Active")
-        n_reliable  = sum(1 for r in results if r["AD"] == "Reliable")
+        n_active   = sum(1 for r in results if r["Activity"] == "Active")
+        n_reliable = sum(1 for r in results if r["AD"] == "Reliable")
+        met_txt    = f"  │  Metabolites: {len(met_data)}" if met_data else ""
         self.status_lbl.config(
             text=f"Done.  Active: {n_active}/{len(results)}  "
-                 f"│  AD Reliable: {n_reliable}/{len(results)}")
+                 f"│  AD Reliable: {n_reliable}/{len(results)}{met_txt}")
 
     def _show_error(self, msg):
         self.predict_btn.config(state="normal")
@@ -1207,7 +1329,12 @@ class SinglePredTab(ttk.Frame):
             initialfile="nrtoxpred_single_results.csv")
         if not path:
             return
-        pd.DataFrame(self._last_results).to_csv(path, index=False)
+        rows = [{"Source": "Parent", **r} for r in self._last_results]
+        for label, met_smi, prob, met_results in self._last_met_data:
+            for r in met_results:
+                rows.append({"Source": label, "SMILES": met_smi,
+                             "Probability": round(prob, 4), **r})
+        pd.DataFrame(rows).to_csv(path, index=False)
         messagebox.showinfo("Saved", f"Results saved to:\n{path}")
 
 

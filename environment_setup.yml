@@ -16,3 +16,4 @@ dependencies:
     - openpyxl
     - Pillow
     - huggingface_hub
+    - syGMa
