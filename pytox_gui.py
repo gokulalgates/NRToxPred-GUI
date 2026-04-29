@@ -1023,6 +1023,7 @@ class SinglePredTab(ttk.Frame):
         self._photo = None
         self._thumb_photos = []        # keep refs so GC doesn't collect them
         self._compound_smiles = {}     # label → SMILES for click-to-view
+        self._compound_results = {}    # label → results list for click-to-view
         self._last_results = []
         self._last_met_data = []
         self._build()
@@ -1249,7 +1250,7 @@ class SinglePredTab(ttk.Frame):
                                     fill=COLORS["subtext"], font=FONT_SMALL)
 
     def _show_structure(self, smiles: str, label: str = ""):
-        """Update the main canvas and molecular properties for the selected compound."""
+        """Update canvas, properties, and results table for the selected compound."""
         pil = mol_to_pil(smiles, size=(310, 190))
         photo = pil_to_photo(pil)
         self.mol_canvas.delete("all")
@@ -1261,7 +1262,7 @@ class SinglePredTab(ttk.Frame):
                                         fill=COLORS["inactive"], font=FONT_SMALL)
         self._struct_lbl.config(text=label)
 
-        # Recompute and display molecular properties for the selected compound
+        # Recompute molecular properties
         if IMPORTS_OK:
             try:
                 mol = Chem.MolFromSmiles(smiles)
@@ -1274,8 +1275,25 @@ class SinglePredTab(ttk.Frame):
             except Exception:
                 pass
 
+        # Show only this compound's prediction results
+        self._show_compound_results(label)
+
+    def _show_compound_results(self, label: str):
+        """Populate the results table with results for the given compound label."""
+        results = self._compound_results.get(label)
+        if results is None:
+            return
+        for row in self.res_tree.get_children():
+            self.res_tree.delete(row)
+        for r in results:
+            tags = _row_tags(r["Activity"], r["AD"])
+            self.res_tree.insert("", "end",
+                                 values=(label, r["Receptor"], r["Activity"],
+                                         r["Active%"], r["Inactive%"], r["AD"]),
+                                 tags=tags)
+
     def _on_tree_select(self, event):
-        """Switch the main canvas when the user clicks a result row."""
+        """Switch structure + results when the user clicks a row with a known label."""
         sel = self.res_tree.selection()
         if not sel:
             return
@@ -1443,29 +1461,13 @@ class SinglePredTab(ttk.Frame):
         for k, v in desc.items():
             self.prop_tree.insert("", "end", values=(k, v))
 
-        # ── results table: parent rows then metabolite rows ───────────────────
-        for row in self.res_tree.get_children():
-            self.res_tree.delete(row)
+        # ── build per-compound results lookup ────────────────────────────────
+        self._compound_results = {"Parent": results}
+        for label, met_smi, prob, pathway, met_results, _ in (met_data or []):
+            self._compound_results[label] = met_results
 
-        for r in results:
-            tags = _row_tags(r["Activity"], r["AD"])
-            self.res_tree.insert("", "end",
-                                 values=("Parent", r["Receptor"], r["Activity"],
-                                         r["Active%"], r["Inactive%"], r["AD"]),
-                                 tags=tags)
-
-        if met_data:
-            for label, met_smi, prob, pathway, met_results, _ in met_data:
-                sep_text = f"── {label}" + (f"  [{pathway}]" if pathway else "") + " ──"
-                self.res_tree.insert("", "end",
-                                     values=(sep_text, "", "", "", "", ""),
-                                     tags=("met_sep",))
-                for r in met_results:
-                    tags = _row_tags(r["Activity"], r["AD"]) + ("metabolite",)
-                    self.res_tree.insert("", "end",
-                                         values=(label, r["Receptor"], r["Activity"],
-                                                 r["Active%"], r["Inactive%"], r["AD"]),
-                                         tags=tags)
+        # Show parent results by default
+        self._show_compound_results("Parent")
 
         self._last_results = results
         self._last_met_data = met_data or []
@@ -1494,7 +1496,7 @@ class SinglePredTab(ttk.Frame):
             return
         rows = [{"Source": "Parent", **r} for r in self._last_results]
         for label, met_smi, prob, pathway, met_results, _ in self._last_met_data:
-            for r in met_results:
+            for r in (self._compound_results.get(label) or met_results):
                 rows.append({"Source": label, "SMILES": met_smi,
                              "Probability": round(prob, 4),
                              "Pathway": pathway, **r})
