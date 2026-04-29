@@ -631,6 +631,10 @@ def pil_to_photo(pil_img) -> "ImageTk.PhotoImage | None":
     """Convert a PIL Image to ImageTk.PhotoImage — must run on the main thread."""
     if pil_img is None:
         return None
+    # Guard: if there is no Tk root yet (or it has been destroyed), PhotoImage.__init__
+    # raises an exception midway, leaving __photo unset and causing __del__ AttributeError.
+    if tk._default_root is None:
+        return None
     try:
         return ImageTk.PhotoImage(pil_img)
     except Exception:
@@ -715,6 +719,16 @@ class NRToxPredApp(tk.Tk):
         self._build_tabs()
         self._start_prewarm()
         self._poll_ui_queue()
+        # Clear PhotoImage refs before tkinter shuts down to avoid Pillow __del__ errors
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        try:
+            self.tab_single._photo = None
+            self.tab_single._thumb_photos.clear()
+        except Exception:
+            pass
+        self.destroy()
 
     def _poll_ui_queue(self):
         """Drain _ui_queue on the main thread so background threads can post UI updates safely."""
