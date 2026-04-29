@@ -1235,7 +1235,7 @@ class SinglePredTab(ttk.Frame):
                                     fill=COLORS["subtext"], font=FONT_SMALL)
 
     def _show_structure(self, smiles: str, label: str = ""):
-        """Update the main canvas to show the molecule for the given SMILES."""
+        """Update the main canvas and molecular properties for the selected compound."""
         pil = mol_to_pil(smiles, size=(310, 190))
         photo = pil_to_photo(pil)
         self.mol_canvas.delete("all")
@@ -1246,6 +1246,19 @@ class SinglePredTab(ttk.Frame):
             self.mol_canvas.create_text(155, 95, text="Could not render structure",
                                         fill=COLORS["inactive"], font=FONT_SMALL)
         self._struct_lbl.config(text=label)
+
+        # Recompute and display molecular properties for the selected compound
+        if IMPORTS_OK:
+            try:
+                mol = Chem.MolFromSmiles(smiles)
+                if mol:
+                    desc = _calc_descriptors(mol)
+                    for row in self.prop_tree.get_children():
+                        self.prop_tree.delete(row)
+                    for k, v in desc.items():
+                        self.prop_tree.insert("", "end", values=(k, v))
+            except Exception:
+                pass
 
     def _on_tree_select(self, event):
         """Switch the main canvas when the user clicks a result row."""
