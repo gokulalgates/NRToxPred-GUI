@@ -1187,10 +1187,11 @@ class SinglePredTab(ttk.Frame):
             "<Configure>",
             lambda e: self._thumb_canvas.configure(
                 scrollregion=self._thumb_canvas.bbox("all")))
-        # placeholder text in strip
-        tk.Label(self._thumb_inner, text="Structures appear here after prediction",
-                 bg=COLORS["surface2"], fg=COLORS["subtext"],
-                 font=("Helvetica", 8)).pack(padx=10, pady=30)
+        self._thumb_placeholder = tk.Label(
+            self._thumb_inner,
+            text="Structures appear here after prediction",
+            bg=COLORS["surface2"], fg=COLORS["subtext"], font=("Helvetica", 8))
+        self._thumb_placeholder.pack(padx=10, pady=30)
 
         # descriptors
         prop_f = ttk.Frame(right, style="Surface.TFrame")
@@ -1302,10 +1303,11 @@ class SinglePredTab(ttk.Frame):
         if smiles:
             self._show_structure(smiles, label)
 
-    def _update_thumbnails(self, compound_list):
+    def _update_thumbnails(self, compound_list, no_met_reason: str = ""):
         """
         Populate the thumbnail strip.
         compound_list: [(label, smiles, PhotoImage_or_None), ...]
+        no_met_reason: shown when only the parent is present (e.g. PFAS message).
         Must be called on the main thread.
         """
         for w in self._thumb_inner.winfo_children():
@@ -1334,6 +1336,13 @@ class SinglePredTab(ttk.Frame):
             for widget in cell.winfo_children() + [cell]:
                 widget.bind("<Button-1>",
                             lambda e, s=smiles, l=label: self._show_structure(s, l))
+
+        # If metabolite prediction was requested but returned nothing, explain why
+        if no_met_reason:
+            tk.Label(self._thumb_inner, text=no_met_reason,
+                     bg=COLORS["surface2"], fg=COLORS["unreliable"],
+                     font=("Helvetica", 8), wraplength=340).pack(
+                padx=10, pady=28, side="left")
 
         self._thumb_canvas.update_idletasks()
         self._thumb_canvas.configure(
@@ -1453,7 +1462,15 @@ class SinglePredTab(ttk.Frame):
                 self._thumb_photos.append(photo)
             photo_compound_list.append((label, smi, photo))
 
-        self._update_thumbnails(photo_compound_list)
+        # If metabolites were requested but none predicted, explain why
+        no_met_reason = ""
+        if self.met_var.get() and _HAS_SYGMA and not met_data:
+            no_met_reason = (
+                "No Phase I metabolites predicted. "
+                "This is expected for fully fluorinated (PFAS) or highly "
+                "substituted compounds with no accessible C–H bonds for CYP450 reactions.")
+
+        self._update_thumbnails(photo_compound_list, no_met_reason)
 
         # ── properties table ──────────────────────────────────────────────────
         for row in self.prop_tree.get_children():
